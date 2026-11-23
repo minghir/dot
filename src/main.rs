@@ -90,6 +90,63 @@ struct IconFrame {
 }
 
 impl IconFrame {
+    fn remove_corner_background(&mut self, tolerance: f32) {
+        let w = self.width as usize;
+        let h = self.height as usize;
+        if w == 0 || h == 0 {
+            return;
+        }
+        let bg = self.get_pixel(0, 0);
+        let mut visited = vec![false; w * h];
+        let mut stack = vec![
+            (0u32, 0u32),
+            (self.width - 1, 0),
+            (0, self.height - 1),
+            (self.width - 1, self.height - 1),
+        ];
+        let feather = 30.0_f32;
+
+        while let Some((x, y)) = stack.pop() {
+            let idx = y as usize * w + x as usize;
+            if visited[idx] {
+                continue;
+            }
+            visited[idx] = true;
+
+            let p = self.pixels[idx];
+            if p[3] == 0 {
+                continue;
+            }
+
+            let dr = p[0] as f32 - bg[0] as f32;
+            let dg = p[1] as f32 - bg[1] as f32;
+            let db = p[2] as f32 - bg[2] as f32;
+            let dist = (dr * dr + dg * dg + db * db).sqrt();
+
+            if dist <= tolerance {
+                self.pixels[idx] = [0, 0, 0, 0];
+                if x > 0 { stack.push((x - 1, y)); }
+                if x + 1 < self.width { stack.push((x + 1, y)); }
+                if y > 0 { stack.push((x, y - 1)); }
+                if y + 1 < self.height { stack.push((x, y + 1)); }
+            } else if dist < tolerance + feather {
+                // Elimină haloul alb de pe marginile rotunjite
+                let alpha = ((dist - tolerance) / feather).clamp(0.0, 1.0);
+                let unblend = |c: u8, b: u8| -> u8 {
+                    (((c as f32 - (1.0 - alpha) * b as f32) / alpha).clamp(0.0, 255.0)) as u8
+                };
+                self.pixels[idx] = [
+                    unblend(p[0], bg[0]),
+                    unblend(p[1], bg[1]),
+                    unblend(p[2], bg[2]),
+                    (alpha * 255.0) as u8,
+                ];
+            }
+        }
+        self.dirty = true;
+    }
+
+
     fn new(width: u32, height: u32, color_depth: ColorDepth) -> Self {
         let count = (width * height) as usize;
         Self {
@@ -959,9 +1016,9 @@ impl eframe::App for IconEditorApp {
                 if ui.button("Nou").clicked() {
                     *self = Self::default();
                 }
-                if ui.button("Importa PNG").clicked() {
+                if ui.button("Importa Imagine").clicked() {
                     if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Imagini", &["png", "jpg", "bmp"])
+                        .add_filter("Imagini", &["png", "jpg", "jpeg", "bmp"])
                         .pick_file()
                     {
                         self.import_png(&path);
@@ -1038,6 +1095,11 @@ impl eframe::App for IconEditorApp {
                         self.frames[self.active_frame].redo();
                     }
                 });
+                if ui.button("Sterge fundal (Colturi -> Transparent)").clicked() {
+                    let f = &mut self.frames[self.active_frame];
+                    f.push_undo();
+                    f.remove_corner_background(35.0);
+                }
                 if ui.button("Sterge Tot Frame-ul").clicked() {
                     let f = &mut self.frames[self.active_frame];
                     f.push_undo();
