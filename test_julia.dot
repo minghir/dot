@@ -1,0 +1,52 @@
+let w = width()
+let h = height()
+let max_iter = 32
+let cx = -0.7
+let cy = 0.27015
+let y = 0
+
+while y < h {
+    let x = 0
+    let py0 = (y - h / 2) * (2.6 / h)
+
+    while x < w {
+        let zx = (x - w / 2) * (2.6 / w)
+        let zy = py0
+        let iter = 0
+        let r2 = 0.0
+
+        while (zx * zx + zy * zy <= 4.0) && (iter < max_iter) {
+            let tmp = zx * zx - zy * zy + cx
+            zy = 2.0 * zx * zy + cy
+            zx = tmp
+            iter = iter + 1
+        }
+
+        r2 = zx * zx + zy * zy
+
+        if iter == max_iter {
+            put_pixel(#070514ff, x, y)
+        } else {
+            let r = sqrt(r2)
+            let angle = (atan2(zy, zx) + pi()) / (2.0 * pi())
+            let t = clamp(iter / max_iter, 0.0, 1.0)
+            let radial = clamp((r - 2.0) / 2.0, 0.0, 1.0)
+
+            let base_col = mix(#1d3557ff, #ffbe0bff, t)
+            let polar_col = rgba(
+                clamp(0.2 + 0.8 * angle, 0.0, 1.0),
+                clamp(0.15 + 0.75 * radial, 0.0, 1.0),
+                clamp(0.95 - 0.5 * angle, 0.0, 1.0),
+                1.0
+            )
+
+            put_pixel(mix(base_col, polar_col, 0.45), x, y)
+        }
+
+        x = x + 1
+    }
+
+    y = y + 1
+}
+
+echo("Julia polar generat pe", w, "x", h)

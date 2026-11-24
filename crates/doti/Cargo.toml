@@ -1,0 +1,16 @@
+[package]
+name = "doti"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "doti"
+path = "src/main.rs"
+
+[dependencies]
+dot-lang = { path = "../dot-lang" }
+eframe = "0.29.1"
+egui = "0.29.1"
+ico = "0.3"
+image = "0.25"
+rfd = "0.15"

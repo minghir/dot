@@ -1,0 +1,74 @@
+let w = width()
+let h = height()
+
+# 1. Construim dinamic paleta gradată (de la verde închis la verde smarald și vârfuri aurii)
+let pal = []
+let grad_steps = 8
+for i in 0..grad_steps {
+    let t = i / (grad_steps - 1.0)
+    let c = mix(#0b3d2eff, #52b788ff, t)
+    push(pal, c)
+}
+push(pal, #95d5b2ff)
+push(pal, #d8f3dcff)
+let n_col = len(pal)
+
+# 2. Construim dinamic cele 4 transformări afine Barnsley:
+#    Format: [prob_cumulativa, a, b, c, d, f]
+#    x_next = a * x + b * y
+#    y_next = c * x + d * y + f
+let ifs = []
+push(ifs, [0.01,  0.00,  0.00,  0.00, 0.16, 0.00])   # f1: tulpina (1%)
+push(ifs, [0.86,  0.85,  0.04, -0.04, 0.85, 1.60])   # f2: frunzele succesive (85%)
+push(ifs, [0.93,  0.20, -0.26,  0.23, 0.22, 1.60])   # f3: foliola stângă (7%)
+push(ifs, [1.00, -0.15,  0.28,  0.26, 0.24, 0.44])   # f4: foliola dreaptă (7%)
+
+# Fundal întunecat
+rect(#050807ff, 0, 0, w, h)
+
+# 3. Iterăm punctul (fx, fy) în domeniul standard Barnsley:
+#    fx in [-2.1820, 2.6558], fy in [0.0, 9.9983]
+let fx = 0.0
+let fy = 0.0
+let seed = 424242
+let steps = 80000
+
+for i in 0..steps {
+    # Generator LCG determinist în [0.0, 1.0)
+    seed = (seed * 1103515245 + 12345) % 2147483647
+    let r = seed / 2147483647.0
+
+    # Alegem transformarea conform probabilității cumulative
+    let t_idx = 3
+    for k in 0..len(ifs) {
+        let row = ifs[k]
+        if r <= row[0] {
+            t_idx = k
+            break
+        }
+    }
+
+    let coeff = ifs[t_idx]
+    let nx = coeff[1] * fx + coeff[2] * fy
+    let ny = coeff[3] * fx + coeff[4] * fy + coeff[5]
+    fx = nx
+    fy = ny
+
+    if i >= 20 {
+        # Mapăm coordonatele matematice (fx, fy) pe dimensiunea curentă a canvas-ului
+        let norm_x = (fx + 2.3) / 5.1
+        let norm_y = fy / 10.2
+
+        let px = int(norm_x * (w - 1))
+        let py = int((1.0 - norm_y) * (h - 1))
+
+        if px >= 0 && px < w && py >= 0 && py < h {
+            # Culoare gradată în funcție de înălțime (norm_y) și ramura curentă
+            let pos = clamp(norm_y * 0.85 + (t_idx * 0.05), 0.0, 0.999) * n_col
+            let c_idx = int(pos)
+            put_pixel(pal[c_idx], px, py)
+        }
+    }
+}
+
+echo("Barnsley Fern generat:", steps, "pași | transformări:", len(ifs), "| culori:", n_col)

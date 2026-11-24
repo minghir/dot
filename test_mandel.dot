@@ -1,0 +1,47 @@
+let w = width()
+let h = height()
+let max_iter = 40
+let band_size = 8
+let y = 0
+
+while y < h {
+    let x = 0
+    let cy = (y - h / 2) * (2.5 / h)
+
+    while x < w {
+        let cx = (x - w / 2) * (3.5 / w) - 0.5
+        let zx = 0.0
+        let zy = 0.0
+        let iter = 0
+
+        while (zx * zx + zy * zy <= 4.0) && (iter < max_iter) {
+            let tmp = zx * zx - zy * zy + cx
+            zy = 2.0 * zx * zy + cy
+            zx = tmp
+            iter = iter + 1
+        }
+
+        if iter == max_iter {
+            put_pixel(#060412ff, x, y)
+        } else {
+            let phase = (iter % band_size) / band_size
+            let band = iter % 3
+
+            if band == 0 {
+                put_pixel(rgba(0.15 + 0.85 * phase, 0.25 * phase, 0.75, 1.0), x, y)
+            } else {
+                if band == 1 {
+                    put_pixel(rgba(0.95, 0.20 + 0.65 * phase, 0.45, 1.0), x, y)
+                } else {
+                    put_pixel(rgba(0.20 + 0.70 * phase, 0.90, 0.45 + 0.50 * phase, 1.0), x, y)
+                }
+            }
+        }
+
+        x = x + 1
+    }
+
+    y = y + 1
+}
+
+echo("Mandelbrot cu benzi ciclice generat pe", w, "x", h)

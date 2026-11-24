@@ -1,0 +1,62 @@
+let w = width()
+let h = height()
+let max_iter = 64
+let log2 = log(2.0)
+
+let pal = [
+    #0d1b4cff,
+    #1b4965ff,
+    #3a86ffff,
+    #00f5d4ff,
+    #ffbe0bff,
+    #fb5607ff,
+    #ff006eff,
+    #8338ecff
+]
+let n = len(pal)
+
+for y in 0..h {
+    let cy = (y - h / 2) * (2.5 / h)
+
+    for x in 0..w {
+        let cx = (x - w / 2) * (3.5 / w) - 0.5
+        let zx = 0.0
+        let zy = 0.0
+        let iter = 0
+        let r2 = 0.0
+
+        while iter < max_iter {
+            r2 = zx * zx + zy * zy
+            if r2 > 16.0 {
+                break
+            }
+            let tmp = zx * zx - zy * zy + cx
+            zy = 2.0 * zx * zy + cy
+            zx = tmp
+            iter = iter + 1
+        }
+
+        r2 = zx * zx + zy * zy
+
+        if iter == max_iter {
+            put_pixel(#060412ff, x, y)
+        } else {
+            let log_mag = 0.5 * log(r2)
+            let nu = iter + 1.0 - log(log_mag) / log2
+            let scaled = clamp(nu, 0.0, max_iter * 1.0) * 0.35
+
+            let base_idx = floor(scaled)
+            let frac = scaled - base_idx
+
+            # Conversie la întreg prin scădere/modulo pentru indexare
+            let i0 = (iter) % n
+            let i1 = (iter + 1) % n
+
+            # Dacă floor() returnează Float, folosim interpolarea cu frac
+            let col = mix(pal[i0], pal[i1], clamp(frac, 0.0, 1.0))
+            put_pixel(col, x, y)
+        }
+    }
+}
+
+echo("Mandelbrot smooth cu paletă:", n, "culori")

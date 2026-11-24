@@ -1,0 +1,13 @@
+[package]
+name = "dot-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "dot"
+path = "src/main.rs"
+
+[dependencies]
+dot-lang = { path = "../dot-lang" }
+ico = "0.3"
+image = "0.25"

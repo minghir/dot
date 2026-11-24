@@ -755,6 +755,9 @@ struct IconEditorApp {
     selection: Option<(u32, u32, u32, u32)>, // (x0, y0, x1, y1) inclusiv, în coordonate pixel
     select_drag_start: Option<(i32, i32)>,
     hovered_coord: Option<(u32, u32)>,
+    cmd_input: String,
+    cmd_history: Vec<String>,
+    cmd_vars: std::collections::HashMap<String, dot_lang::Value>,
 }
 
 impl Default for IconEditorApp {
@@ -781,11 +784,65 @@ impl Default for IconEditorApp {
             selection: None,
             select_drag_start: None,
             hovered_coord: None,
+            cmd_input: String::new(),
+            cmd_history: Vec::new(),
+            cmd_vars: std::collections::HashMap::new(), 
         }
     }
 }
 
 impl IconEditorApp {
+
+    fn run_dot_command(&mut self, raw: &str) {
+        let line = raw.trim();
+        if line.is_empty() {
+            return;
+        }
+
+        self.cmd_history.push(format!("> {line}"));
+
+        let frame = &mut self.frames[self.active_frame];
+        frame.push_undo();
+
+        let saved_vars = std::mem::take(&mut self.cmd_vars);
+
+        let (result, returned_vars) = {
+            let Ok(canvas) =
+                dot_lang::CanvasBuffer::new(frame.width, frame.height, &mut frame.pixels)
+            else {
+                self.cmd_vars = saved_vars;
+                self.cmd_history
+                    .push("Eroare: buffer de pixeli invalid.".to_string());
+                return;
+            };
+
+            let mut ctx = dot_lang::EvalContext {
+                canvas,
+                output: Vec::new(),
+                vars: saved_vars,
+            };
+
+            let eval_res = dot_lang::eval_script(line, &mut ctx);
+            (eval_res.map(|()| ctx.output), ctx.vars)
+        };
+
+        self.cmd_vars = returned_vars;
+        frame.dirty = true;
+
+        match result {
+            Ok(lines) => {
+                for l in lines {
+                    self.cmd_history.push(l);
+                }
+                self.status_msg = "Script executat.".to_string();
+            }
+            Err(err) => {
+                let msg = format!("Eroare dot: {err}");
+                self.cmd_history.push(msg.clone());
+                self.status_msg = msg;
+            }
+        }
+    }
     
     fn from_startup_path(path: Option<PathBuf>) -> IconEditorApp {
         let mut app = IconEditorApp::default();
@@ -1802,6 +1859,78 @@ impl eframe::App for IconEditorApp {
                     }
                     self.auto_fit_zoom();
                 }
+            });
+
+        // 4b. CONSOLĂ LIMBAJ DOT (MULTI-LINIE + VARIABILE PERSISTENTE)
+        egui::TopBottomPanel::bottom("command_panel")
+            .resizable(true)
+            .min_height(120.0_f32)
+            .default_height(165.0_f32)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.strong("Console (dot)");
+                    ui.label("(Ctrl+Enter sau Run pentru execuție)");
+                    if ui.small_button("Clear").clicked() {
+                        self.cmd_history.clear();
+                    }
+                    if ui.small_button("Reset Vars").clicked() {
+                        self.cmd_vars.clear();
+                        self.cmd_history.push("[variabile resetate]".to_string());
+                    }
+                });
+
+                ui.separator();
+
+                egui::ScrollArea::vertical()
+                    .stick_to_bottom(true)
+                    .max_height(80.0_f32)
+                    .show(ui, |ui| {
+                        for entry in &self.cmd_history {
+                            ui.monospace(entry);
+                        }
+                    });
+
+                let open_braces = self
+                    .cmd_input
+                    .chars()
+                    .fold(0_i32, |acc, c| match c {
+                        '{' => acc + 1,
+                        '}' => acc - 1,
+                        _ => acc,
+                    });
+
+                let ctrl_enter = ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Enter));
+                let plain_enter_single_line = !self.cmd_input.contains('\n')
+                    && open_braces <= 0
+                    && ui.input(|i| {
+                        !i.modifiers.ctrl
+                            && !i.modifiers.shift
+                            && i.key_pressed(egui::Key::Enter)
+                    });
+
+                ui.horizontal_top(|ui| {
+                    ui.monospace(if open_braces > 0 { ".." } else { ">>" });
+                    let edit = ui.add(
+                        egui::TextEdit::multiline(&mut self.cmd_input)
+                            .desired_rows(3)
+                            .desired_width((ui.available_width() - 72.0_f32).max(120.0_f32))
+                            .code_editor()
+                            .hint_text(
+                                "ex:\nlet c = #ff0000\nif get_pixel(10, 10) == c {\n  put_pixel(mix(c, #00ff00, 0.5), 10, 10)\n}",
+                            ),
+                    );
+
+                    let mut run_clicked = ui.button("Run").clicked();
+                    if ctrl_enter || plain_enter_single_line {
+                        run_clicked = true;
+                    }
+
+                    if run_clicked {
+                        let script = std::mem::take(&mut self.cmd_input);
+                        self.run_dot_command(&script);
+                        edit.request_focus();
+                    }
+                });
             });
 
         // 5. ZONA CENTRALĂ: CANVAS DE EDITARE PIXEL-CU-PIXEL (OPTIMIZAT GPU)

@@ -1,0 +1,46 @@
+let w = width()
+let h = height()
+let max_iter = 64
+
+let pal = [
+    #0d1b4cff,
+    #1b4965ff,
+    #3a86ffff,
+    #00f5d4ff,
+    #ffbe0bff,
+    #fb5607ff,
+    #ff006eff,
+    #8338ecff
+]
+let n = len(pal)
+
+for y in 0..h {
+    let cy = (y - h / 2) * (2.5 / h)
+
+    for x in 0..w {
+        let cx = (x - w / 2) * (3.5 / w) - 0.5
+        let zx = 0.0
+        let zy = 0.0
+        let iter = 0
+
+        while iter < max_iter {
+            let r2 = zx * zx + zy * zy
+            if r2 > 4.0 {
+                break
+            }
+            let tmp = zx * zx - zy * zy + cx
+            zy = 2.0 * zx * zy + cy
+            zx = tmp
+            iter = iter + 1
+        }
+
+        if iter == max_iter {
+            put_pixel(#060412ff, x, y)
+        } else {
+            let col = pal[iter % n]
+            put_pixel(col, x, y)
+        }
+    }
+}
+
+echo("Mandelbrot cu paletă generat:", w, "x", h, "| culori:", n)

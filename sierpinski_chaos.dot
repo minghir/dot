@@ -1,0 +1,52 @@
+let w = width()
+let h = height()
+
+# 1. Construim dinamic paleta de culori cu push()
+let pal = []
+push(pal, #3a86ffff)
+push(pal, #00f5d4ff)
+push(pal, #ffbe0bff)
+push(pal, #ff2a85ff)
+push(pal, #8338ecff)
+let n_col = len(pal)
+
+# 2. Construim dinamic lista celor 3 vârfuri ale triunghiului [x, y]
+let margin = 12
+let vertices = []
+push(vertices, [w / 2, margin])
+push(vertices, [margin, h - margin - 1])
+push(vertices, [w - margin - 1, h - margin - 1])
+let n_vert = len(vertices)
+
+# Fundal întunecat
+rect(#060412ff, 0, 0, w, h)
+
+# 3. Chaos Game: punct curent (px, py) și generator determinist LCG
+let px = w / 2.0
+let py = h / 2.0
+let seed = 1337
+let steps = 45000
+
+for i in 0..steps {
+    # Pas LCG (întregi pozitivi) pentru alegerea unui vârf 0..2
+    seed = (seed * 1103515245 + 12345) % 2147483647
+    let v_idx = seed % n_vert
+
+    let target = vertices[v_idx]
+    let tx = target[0]
+    let ty = target[1]
+
+    # Deplasăm punctul la jumătatea distanței către vârful ales
+    px = (px + tx) * 0.5
+    py = (py + ty) * 0.5
+
+    # Ignorăm primele 20 de iterații (warm-up)
+    if i >= 20 {
+        let ix = int(px)
+        let iy = int(py)
+        let col = pal[(v_idx + i / 9000) % n_col]
+        put_pixel(col, ix, iy)
+    }
+}
+
+echo("Sierpinski generat:", steps, "pași | vârfuri:", n_vert, "| culori:", n_col)

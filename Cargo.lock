@@ -1001,10 +1001,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "dot"
+name = "dot-cli"
 version = "0.1.0"
 dependencies = [
+ "dot-lang",
+ "ico",
+ "image",
+]
+
+[[package]]
+name = "dot-lang"
+version = "0.1.0"
+
+[[package]]
+name = "doti"
+version = "0.1.0"
+dependencies = [
+ "dot-lang",
  "eframe",
+ "egui",
  "ico",
  "image",
  "rfd",
@@ -1709,9 +1724,9 @@ checksum = "dfa686283ad6dd069f105e5ab091b04c62850d3e4cf5d67debad1933f55023df"
 
 [[package]]
 name = "ico"
-version = "0.4.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc50b891e4acf8fe0e71ef88ec43ad82ee07b3810ad09de10f1d01f072ed4b98"
+checksum = "e3804960be0bb5e4edb1e1ad67afd321a9ecfd875c3e65c099468fd2717d7cae"
 dependencies = [
  "byteorder",
  "png 0.17.16",

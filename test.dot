@@ -1,0 +1,8 @@
+let c1 = #ff3b30
+let c2 = #007aff
+put_pixel(c1, 8, 8)
+put_pixel(mix(c1, c2, 0.5), 9, 8)
+if get_pixel(8, 8) == c1 {
+    put_pixel(#34c759, 10, 8)
+}
+echo("Test dot.exe finalizat")

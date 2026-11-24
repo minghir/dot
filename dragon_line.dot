@@ -1,0 +1,107 @@
+let w = width()
+let h = height()
+
+# 1. Construim dinamic paleta de culori (gradient de la cyan la magenta și auriu)
+let pal = []
+let pal_steps = 8
+for i in 0..pal_steps {
+    let t = i / (pal_steps - 1.0)
+    push(pal, mix(#00f5d4ff, #ff2a85ff, t))
+}
+push(pal, #ffbe0bff)
+push(pal, #8338ecff)
+let n_col = len(pal)
+
+# 2. Generăm secvența de viraje prin pliere iterativă folosind push():
+#    La fiecare pas: adăugăm +1 (viraj stânga), apoi parcurgem lista anterioară
+#    de la coadă la cap și adăugăm virajul opus (-turns[j]).
+let order = 13
+let turns = []
+
+for step in 0..order {
+    let prev_len = len(turns)
+    push(turns, 1)
+
+    for k in 0..prev_len {
+        let rev_idx = prev_len - 1 - k
+        push(turns, -turns[rev_idx])
+    }
+}
+
+# 3. Construim lista completă de puncte [x, y] ale curbei
+#    Direcții cardinale: 0 = Est (+1, 0), 1 = Nord (0, -1), 2 = Vest (-1, 0), 3 = Sud (0, +1)
+let dx = [1, 0, -1, 0]
+let dy = [0, -1, 0, 1]
+
+let dir = 0
+let cx = 0
+let cy = 0
+
+let points = []
+push(points, [cx, cy])
+
+# Primul pas înainte
+cx = cx + dx[dir]
+cy = cy + dy[dir]
+push(points, [cx, cy])
+
+let min_x = 0
+let max_x = 1
+let min_y = 0
+let max_y = 0
+
+let n_turns = len(turns)
+for i in 0..n_turns {
+    dir = (dir + turns[i] + 4) % 4
+    cx = cx + dx[dir]
+    cy = cy + dy[dir]
+    push(points, [cx, cy])
+
+    if cx < min_x { min_x = cx }
+    if cx > max_x { max_x = cx }
+    if cy < min_y { min_y = cy }
+    if cy > max_y { max_y = cy }
+}
+
+# 4. Calculăm factorul de scalare ca curba să încapă centrată în canvas
+let margin = 16
+let span_x = max(1, max_x - min_x)
+let span_y = max(1, max_y - min_y)
+
+let scale_x = (w - 2.0 * margin) / span_x
+let scale_y = (h - 2.0 * margin) / span_y
+let scale = min(scale_x, scale_y)
+
+let offset_x = (w - span_x * scale) * 0.5
+let offset_y = (h - span_y * scale) * 0.5
+
+# Fundal întunecat
+rect(#060412ff, 0, 0, w, h)
+
+# 5. Desenăm fiecare segment direct cu funcția nativă line()
+let total_pts = len(points)
+let total_segs = total_pts - 1
+
+for i in 0..total_segs {
+    let p0 = points[i]
+    let p1 = points[i + 1]
+
+    let x0 = offset_x + (p0[0] - min_x) * scale
+    let y0 = offset_y + (p0[1] - min_y) * scale
+    let x1 = offset_x + (p1[0] - min_x) * scale
+    let y1 = offset_y + (p1[1] - min_y) * scale
+
+    let prog = (i * 1.0) / total_segs
+    let c_idx = min(n_col - 1, int(prog * n_col))
+    let col = pal[c_idx]
+
+    line(col, x0, y0, x1, y1)
+}
+
+# Marcăm capetele curbei (start și final) cu circle()
+let start_pt = points[0]
+let end_pt = points[total_segs]
+circle(#00f5d4ff, offset_x + (start_pt[0] - min_x) * scale, offset_y + (start_pt[1] - min_y) * scale, 4, 1)
+circle(#ffbe0bff, offset_x + (end_pt[0] - min_x) * scale, offset_y + (end_pt[1] - min_y) * scale, 4, 1)
+
+echo("Dragon Curve ordin", order, "| segmente:", total_segs, "| culori:", n_col)

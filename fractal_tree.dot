@@ -1,0 +1,79 @@
+let w = width()
+let h = height()
+
+# Fundal întunecat (cer de noapte)
+rect(#060412ff, 0, 0, w, h)
+
+# 1. Paleta pentru scoarță/ramuri (de la maro închis la verde smarald)
+let wood_pal = []
+let max_depth = 10
+for i in 0..=max_depth {
+    let t = (i * 1.0) / max_depth
+    push(wood_pal, mix(#4a2c18ff, #2d6a4fff, t))
+}
+
+# 2. Paleta pentru flori la vârfurile ramurilor
+let flower_pal = [#ff2a85ff, #ffbe0bff, #ff70a6ff, #00f5d4ff]
+let n_flowers = len(flower_pal)
+
+# 3. Inițializăm stiva pentru parcurgere DFS (Depth-First Search)
+#    Fiecare element din stivă este o listă: [x, y, unghi_rad, lungime, adancime]
+let stack = []
+let start_x = w * 0.5
+let start_y = h - 16.0
+let start_angle = -pi() * 0.5          # În sus (-90 grade)
+let start_len = min(w, h) * 0.24
+
+push(stack, [start_x, start_y, start_angle, start_len, 0])
+
+# Parametrii de ramificare
+let spread = 0.42                      # Unghiul de deschidere (~24 grade)
+let shrink = 0.74                      # Factorul de scurtare a ramurilor
+let branches_drawn = 0
+let flowers_drawn = 0
+
+# 4. Procesăm stiva până devine goală
+while len(stack) > 0 {
+    let node = pop(stack)
+
+    let x0 = node[0]
+    let y0 = node[1]
+    let angle = node[2]
+    let length = node[3]
+    let depth = node[4]
+
+    # Calculăm capătul ramurii curente
+    let x1 = x0 + cos(angle) * length
+    let y1 = y0 + sin(angle) * length
+
+    # Desenăm ramura (trunchiul mai gros prin 3 linii paralele la adâncimi mici)
+    let col = wood_pal[depth]
+    line(col, x0, y0, x1, y1)
+    if depth <= 2 {
+        line(col, x0 - 1, y0, x1 - 1, y1)
+        line(col, x0 + 1, y0, x1 + 1, y1)
+    }
+    branches_drawn = branches_drawn + 1
+
+    if depth < max_depth {
+        let next_len = length * shrink
+        let next_depth = depth + 1
+
+        # Adăugăm pe stivă ramura dreaptă și ramura stângă
+        push(stack, [x1, y1, angle + spread, next_len, next_depth])
+        push(stack, [x1, y1, angle - spread, next_len, next_depth])
+
+        # Ramură centrală mai scurtă la nivelurile superioare pentru coroană bogată
+        if depth >= 3 && depth <= 6 && (depth % 2 == 0) {
+            push(stack, [x1, y1, angle + 0.08, next_len * 0.82, next_depth + 1])
+        }
+    } else {
+        # La frunze (adâncime maximă), desenăm flori cu circle()
+        let f_col = flower_pal[flowers_drawn % n_flowers]
+        circle(f_col, x1, y1, 3, 1)
+        circle(#ffffff88, x1, y1, 1, 1)
+        flowers_drawn = flowers_drawn + 1
+    }
+}
+
+echo("Fractal Tree generat | ramuri:", branches_drawn, "| flori:", flowers_drawn)

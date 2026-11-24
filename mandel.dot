@@ -1,0 +1,46 @@
+let w = width()
+let h = height()
+let max_iter = 36
+
+for y in 0..h {
+    let cy = (y - h / 2) * (2.5 / h)
+
+    for x in 0..w {
+        let cx = (x - w / 2) * (3.5 / w) - 0.5
+        let zx = 0.0
+        let zy = 0.0
+        let iter = 0
+
+        while (zx * zx + zy * zy <= 4.0) && (iter < max_iter) {
+            let tmp = zx * zx - zy * zy + cx
+            zy = 2.0 * zx * zy + cy
+            zx = tmp
+            iter = iter + 1
+        }
+
+        if iter == max_iter {
+            put_pixel(#060412ff, x, y)
+        } else {
+            let r = sqrt(zx * zx + zy * zy)
+            let radial = clamp((r - 2.0) / 2.0, 0.0, 1.0)
+            let angle = (atan2(zy, zx) + pi()) / (2.0 * pi())
+            let stripe = (iter % 6) / 6
+            let progress = clamp(iter / max_iter, 0.0, 1.0)
+
+            let warm = mix(#ff2a85ff, #ffbe0bff, clamp(stripe + 0.35 * radial, 0.0, 1.0))
+            let cool = mix(#14213dff, #3a86ffff, clamp(angle + 0.25 * stripe, 0.0, 1.0))
+            let band_mix = mix(cool, warm, clamp(progress * 0.75 + stripe * 0.25, 0.0, 1.0))
+
+            let glow = rgba(
+                clamp(0.35 + 0.65 * radial, 0.0, 1.0),
+                clamp(0.25 + 0.70 * angle, 0.0, 1.0),
+                clamp(0.55 + 0.45 * (1.0 - radial), 0.0, 1.0),
+                1.0
+            )
+
+            put_pixel(mix(band_mix, glow, 0.28), x, y)
+        }
+    }
+}
+
+echo("Mandelbrot (cu for) generat pe", w, "x", h)

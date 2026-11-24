@@ -1,0 +1,8 @@
+let pts = [[4, 4], [5, 4], [6, 4], [5, 5]]
+set_pixel(#ff3b30, pts)
+erase_pixel([[5, 4]])
+put_pixel(#ffcc00, 5, 4)
+get_pixel(4, 4)
+get_pixel(5, 4)
+get_pixel(5, 5)
+echo("Gata testul cu liste")
