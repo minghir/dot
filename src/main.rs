@@ -76,7 +76,113 @@ enum Tool {
     Eraser,
     Fill,
     Eyedropper,
+    SelectRect,
 }
+
+
+fn draw_pencil_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let stroke = egui::Stroke::new(1.5_f32, color);
+    let tip = egui::pos2(rect.min.x + 3.0_f32, rect.max.y - 3.0_f32);
+    let top = egui::pos2(rect.max.x - 3.0_f32, rect.min.y + 3.0_f32);
+    painter.line_segment([tip, top], stroke);
+
+    let mid = egui::pos2(rect.min.x + 5.5_f32, rect.max.y - 5.5_f32);
+    let side = egui::pos2(rect.min.x + 2.0_f32, rect.max.y - 6.5_f32);
+    painter.line_segment([tip, side], stroke);
+    painter.line_segment([mid, side], stroke);
+}
+
+fn draw_eraser_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let stroke = egui::Stroke::new(1.5_f32, color);
+    let body = egui::Rect::from_min_max(
+        egui::pos2(rect.min.x + 3.0_f32, rect.min.y + 5.0_f32),
+        egui::pos2(rect.max.x - 3.0_f32, rect.max.y - 3.0_f32),
+    );
+    painter.rect_stroke(body, 2.0_f32, stroke);
+    painter.line_segment(
+        [
+            egui::pos2(rect.min.x + 7.5_f32, rect.min.y + 5.0_f32),
+            egui::pos2(rect.min.x + 11.0_f32, rect.max.y - 3.0_f32),
+        ],
+        stroke,
+    );
+}
+
+fn draw_fill_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let stroke = egui::Stroke::new(1.5_f32, color);
+    // Găleată înclinată
+    let p1 = egui::pos2(rect.min.x + 8.0_f32, rect.min.y + 3.0_f32);
+    let p2 = egui::pos2(rect.max.x - 3.0_f32, rect.min.y + 8.0_f32);
+    let p3 = egui::pos2(rect.min.x + 8.0_f32, rect.max.y - 3.0_f32);
+    let p4 = egui::pos2(rect.min.x + 3.0_f32, rect.min.y + 8.0_f32);
+    painter.line_segment([p1, p2], stroke);
+    painter.line_segment([p2, p3], stroke);
+    painter.line_segment([p3, p4], stroke);
+    painter.line_segment([p4, p1], stroke);
+
+    // Picătură în dreapta
+    painter.circle_filled(
+        egui::pos2(rect.max.x - 2.5_f32, rect.max.y - 4.0_f32),
+        1.8_f32,
+        color,
+    );
+}
+
+fn draw_eyedropper_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let stroke = egui::Stroke::new(1.5_f32, color);
+    // Vârf pipetă jos-stânga -> corp sus-dreapta
+    let tip = egui::pos2(rect.min.x + 3.0_f32, rect.max.y - 3.0_f32);
+    let neck = egui::pos2(rect.min.x + 9.5_f32, rect.min.y + 6.5_f32);
+    let head = egui::pos2(rect.max.x - 3.0_f32, rect.min.y + 3.0_f32);
+    painter.line_segment([tip, neck], stroke);
+    painter.circle_stroke(head, 2.2_f32, stroke);
+}
+
+fn draw_select_rect_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let sel_box = egui::Rect::from_min_max(
+        egui::pos2(rect.min.x + 2.5_f32, rect.min.y + 2.5_f32),
+        egui::pos2(rect.max.x - 2.5_f32, rect.max.y - 2.5_f32),
+    );
+    let stroke = egui::Stroke::new(1.4_f32, color);
+    painter.rect_stroke(sel_box, 0.0_f32, stroke);
+}
+
+fn tool_button(
+    ui: &mut egui::Ui,
+    selected: bool,
+    hover_text: &str,
+    draw_icon: impl FnOnce(&egui::Painter, egui::Rect, egui::Color32),
+) -> bool {
+    let desired_size = egui::vec2(28.0_f32, 28.0_f32);
+    let (rect, resp) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+
+    if resp.hovered() || selected {
+        let bg = if selected {
+            ui.visuals().selection.bg_fill
+        } else {
+            ui.visuals().widgets.hovered.bg_fill
+        };
+        ui.painter().rect_filled(rect, 4.0_f32, bg);
+    }
+
+    let fg = if selected {
+        ui.visuals().selection.stroke.color
+    } else {
+        ui.visuals().text_color()
+    };
+
+    let icon_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(16.0_f32, 16.0_f32));
+    draw_icon(ui.painter(), icon_rect, fg);
+
+    let resp = if !hover_text.is_empty() {
+        resp.on_hover_text(hover_text)
+    } else {
+        resp
+    };
+
+    resp.clicked()
+}
+
 
 struct IconFrame {
     width: u32,
@@ -88,6 +194,9 @@ struct IconFrame {
     texture: Option<egui::TextureHandle>,
     dirty: bool,
 }
+
+
+
 
 impl IconFrame {
     fn remove_corner_background(&mut self, tolerance: f32) {
@@ -640,7 +749,12 @@ struct IconEditorApp {
     new_frame_depth: ColorDepth,
     last_draw_pos: Option<(i32, i32)>,
     status_msg: String,
+    current_file: Option<PathBuf>,
+    clipboard: Option<(u32, u32, Vec<[u8; 4]>)>, // (width, height, pixels)
     checker_texture: Option<egui::TextureHandle>,
+    selection: Option<(u32, u32, u32, u32)>, // (x0, y0, x1, y1) inclusiv, în coordonate pixel
+    select_drag_start: Option<(i32, i32)>,
+    hovered_coord: Option<(u32, u32)>,
 }
 
 impl Default for IconEditorApp {
@@ -661,14 +775,20 @@ impl Default for IconEditorApp {
             new_frame_depth: ColorDepth::Bit8,
             last_draw_pos: None,
             status_msg: "Gata. Importa un PNG sau deseneaza direct pe grid.".to_string(),
+            current_file: None,
+            clipboard: None,
             checker_texture: None,
+            selection: None,
+            select_drag_start: None,
+            hovered_coord: None,
         }
     }
 }
 
 impl IconEditorApp {
-    fn from_startup_path(path: Option<PathBuf>) -> Self {
-        let mut app = Self::default();
+    
+    fn from_startup_path(path: Option<PathBuf>) -> IconEditorApp {
+        let mut app = IconEditorApp::default();
         if let Some(p) = path {
             if p.is_file() {
                 match p
@@ -677,8 +797,13 @@ impl IconEditorApp {
                     .map(|s| s.to_lowercase())
                     .as_deref()
                 {
-                    Some("ico") => app.open_ico(&p),
-                    Some("png" | "jpg" | "jpeg" | "bmp") => app.import_png(&p),
+                    Some("ico") => {
+                        app.current_file = Some(p.clone());
+                        app.open_ico(&p);
+                    }
+                    Some("png" | "jpg" | "jpeg" | "bmp") => {
+                        app.import_png(&p);
+                    }
                     _ => app.status_msg = format!("Format nesuportat la pornire: {:?}", p),
                 }
             } else if p.is_dir() {
@@ -686,6 +811,219 @@ impl IconEditorApp {
             }
         }
         app
+    }
+   
+
+    fn save_current_ico(&mut self) {
+        if let Some(path) = self.current_file.clone() {
+            self.save_ico(&path);
+        } else {
+            self.save_ico_as();
+        }
+    }
+
+    fn save_ico_as(&mut self) {
+        let mut dialog = rfd::FileDialog::new()
+            .set_file_name("icon.ico")
+            .add_filter("Windows Icon", &["ico"]);
+
+        if let Some(existing) = &self.current_file {
+            if let Some(dir) = existing.parent() {
+                dialog = dialog.set_directory(dir);
+            }
+            if let Some(name) = existing.file_name().and_then(|n| n.to_str()) {
+                dialog = dialog.set_file_name(name);
+            }
+        }
+
+        if let Some(path) = dialog.save_file() {
+            self.save_ico(&path);
+        }
+    }
+
+    fn close_file(&mut self) {
+        *self = Self::default();
+        self.status_msg = "Fisier inchis.".to_string();
+    }
+
+    fn export_active_png(&mut self) {
+        let frame = &self.frames[self.active_frame];
+        let default_name = format!("icon_{}x{}.png", frame.width, frame.height);
+        let Some(path) = rfd::FileDialog::new()
+            .set_file_name(&default_name)
+            .add_filter("PNG Image", &["png"])
+            .save_file()
+        else {
+            return;
+        };
+
+        let Some(img) =
+            image::RgbaImage::from_raw(frame.width, frame.height, frame.to_flat_rgba())
+        else {
+            self.status_msg = "Eroare la pregatirea imaginii PNG.".to_string();
+            return;
+        };
+
+        match img.save(&path) {
+            Ok(_) => {
+                self.status_msg = format!(
+                    "Exportat PNG: {:?}",
+                    path.file_name().unwrap_or_default()
+                );
+            }
+            Err(e) => {
+                self.status_msg = format!("Eroare export PNG: {e}");
+            }
+        }
+    }
+
+    fn edit_undo(&mut self) {
+        self.frames[self.active_frame].undo();
+        self.status_msg = "Undo aplicat.".to_string();
+    }
+
+    fn edit_redo(&mut self) {
+        self.frames[self.active_frame].redo();
+        self.status_msg = "Redo aplicat.".to_string();
+    }
+
+    fn edit_copy(&mut self) {
+        let frame = &self.frames[self.active_frame];
+
+        if let Some((x0, y0, x1, y1)) = self.selection {
+            let w = x1 - x0 + 1;
+            let h = y1 - y0 + 1;
+            let mut region = Vec::with_capacity((w * h) as usize);
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    region.push(frame.get_pixel(x, y));
+                }
+            }
+            self.clipboard = Some((w, h, region));
+            self.status_msg = format!("Copiat selectia {}x{}.", w, h);
+        } else {
+            self.clipboard = Some((frame.width, frame.height, frame.pixels.clone()));
+            self.status_msg = format!(
+                "Copiat tot frame-ul {}x{} ({}).",
+                frame.width,
+                frame.height,
+                frame.color_depth.short_label()
+            );
+        }
+    }
+
+    fn edit_cut(&mut self) {
+        // Mai întâi copiem zona selectată (sau tot frame-ul dacă nu există selecție)
+        self.edit_copy();
+
+        let dithering = self.use_dithering;
+        let sel = self.selection;
+        let frame = &mut self.frames[self.active_frame];
+        frame.push_undo();
+
+        if let Some((x0, y0, x1, y1)) = sel {
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    frame.set_pixel(x, y, [0, 0, 0, 0]);
+                }
+            }
+            if frame.color_depth != ColorDepth::Bit32 {
+                frame.apply_color_depth(dithering);
+            }
+            frame.dirty = true;
+            self.status_msg = format!("Decupat selectia {}x{}.", x1 - x0 + 1, y1 - y0 + 1);
+        } else {
+            frame.pixels.fill([0, 0, 0, 0]);
+            if frame.color_depth != ColorDepth::Bit32 {
+                frame.apply_color_depth(dithering);
+            }
+            frame.dirty = true;
+            self.status_msg = format!(
+                "Decupat frame {}x{} ({}).",
+                frame.width,
+                frame.height,
+                frame.color_depth.short_label()
+            );
+        }
+    }
+
+    fn edit_paste(&mut self) {
+        let Some((clip_w, clip_h, clip_pixels)) = self.clipboard.clone() else {
+            self.status_msg = "Clipboard-ul este gol.".to_string();
+            return;
+        };
+
+        // Lipim în colțul stânga-sus al selecției curente (sau la (0, 0) dacă nu e nimic selectat)
+        let (dest_x, dest_y) = match self.selection {
+            Some((x0, y0, _, _)) => (x0, y0),
+            None => (0, 0),
+        };
+
+        let dithering = self.use_dithering;
+        let frame = &mut self.frames[self.active_frame];
+        frame.push_undo();
+
+        for sy in 0..clip_h {
+            let ty = dest_y + sy;
+            if ty >= frame.height {
+                break;
+            }
+            for sx in 0..clip_w {
+                let tx = dest_x + sx;
+                if tx >= frame.width {
+                    break;
+                }
+                let px = clip_pixels[(sy * clip_w + sx) as usize];
+                frame.set_pixel(tx, ty, px);
+            }
+        }
+
+        if frame.color_depth != ColorDepth::Bit32 {
+            frame.apply_color_depth(dithering);
+        }
+        frame.dirty = true;
+
+        // Actualizăm chenarul de selecție pe zona proaspăt lipită
+        let end_x = (dest_x + clip_w - 1).min(frame.width - 1);
+        let end_y = (dest_y + clip_h - 1).min(frame.height - 1);
+        self.selection = Some((dest_x, dest_y, end_x, end_y));
+
+        self.status_msg = format!("Lipit {}x{} la ({}, {}).", clip_w, clip_h, dest_x, dest_y);
+    }
+
+    fn select_all(&mut self) {
+        let frame = &self.frames[self.active_frame];
+        self.selection = Some((0, 0, frame.width - 1, frame.height - 1));
+        self.status_msg = format!("Selectat tot frame-ul ({}x{}).", frame.width, frame.height);
+    }
+
+    fn deselect(&mut self) {
+        self.selection = None;
+        self.select_drag_start = None;
+        self.status_msg = "Selectie anulata.".to_string();
+    }
+
+    fn clear_selection_pixels(&mut self) {
+        let Some((x0, y0, x1, y1)) = self.selection else {
+            return;
+        };
+        let dithering = self.use_dithering;
+        let frame = &mut self.frames[self.active_frame];
+        frame.push_undo();
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                frame.set_pixel(x, y, [0, 0, 0, 0]);
+            }
+        }
+        if frame.color_depth != ColorDepth::Bit32 {
+            frame.apply_color_depth(dithering);
+        }
+        frame.dirty = true;
+        self.status_msg = format!(
+            "Sters zona selectata ({}x{}).",
+            x1 - x0 + 1,
+            y1 - y0 + 1
+        );
     }
 
     fn get_checker_texture(&mut self, ctx: &egui::Context) -> egui::TextureId {
@@ -760,6 +1098,7 @@ impl IconEditorApp {
                     self.frames = loaded;
                     self.sort_frames();
                     self.active_frame = 0;
+                    self.current_file = Some(path.to_path_buf());
                     self.auto_fit_zoom();
                     self.status_msg = format!(
                         "Deschis .ico ({} variante dimensiune/culoare)",
@@ -839,6 +1178,7 @@ impl IconEditorApp {
 
         match File::create(path).and_then(|mut f| f.write_all(&out)) {
             Ok(_) => {
+                self.current_file = Some(path.to_path_buf());
                 self.status_msg = format!(
                     "Salvat .ICO ({} variante): {:?}",
                     self.frames.len(),
@@ -993,7 +1333,74 @@ fn plot_line(x0: i32, y0: i32, x1: i32, y1: i32, mut plot: impl FnMut(i32, i32))
 }
 
 impl eframe::App for IconEditorApp {
+    
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+
+        let title = match &self.current_file {
+            Some(path) => {
+                let file_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("icon.ico");
+                format!("DOT — Pixel & Icon Studio — {file_name} ({})", path.display())
+            }
+            None => "DOT — Pixel & Icon Studio — Untitled".to_string(),
+        };
+        ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+
+
+        // Scurtături tastatură fișiere (Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S, Ctrl+W)
+        let mut trigger_new = false;
+        let mut trigger_open = false;
+        let mut trigger_save = false;
+        let mut trigger_save_as = false;
+        let mut trigger_close = false;
+
+        let mut trigger_undo = false;
+        let mut trigger_redo = false;
+        let mut trigger_cut = false;
+        let mut trigger_copy = false;
+        let mut trigger_paste = false;
+
+        ctx.input_mut(|i| {
+            if i.modifiers.ctrl && !i.modifiers.alt {
+                if i.modifiers.shift && i.consume_key(egui::Modifiers::CTRL | egui::Modifiers::SHIFT, egui::Key::S) {
+                    trigger_save_as = true;
+                } else if !i.modifiers.shift && i.consume_key(egui::Modifiers::CTRL, egui::Key::S) {
+                    trigger_save = true;
+                } else if !i.modifiers.shift && i.consume_key(egui::Modifiers::CTRL, egui::Key::N) {
+                    trigger_new = true;
+                } else if !i.modifiers.shift && i.consume_key(egui::Modifiers::CTRL, egui::Key::O) {
+                    trigger_open = true;
+                } else if !i.modifiers.shift && i.consume_key(egui::Modifiers::CTRL, egui::Key::W) {
+                    trigger_close = true;
+                }
+            }
+        });
+
+        if trigger_new {
+            *self = Self::default();
+        }
+        if trigger_open {
+            if let Some(path) = rfd::FileDialog::new()
+                .add_filter("Windows Icon", &["ico"])
+                .pick_file()
+            {
+                self.open_ico(&path);
+            }
+        }
+        if trigger_save {
+            self.save_current_ico();
+        }
+        if trigger_save_as {
+            self.save_ico_as();
+        }
+        if trigger_close {
+            self.close_file();
+        }
+
+
         // Scurtături tastatură (Ctrl+Z / Ctrl+Y)
         if ctx.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::Z)) {
             self.frames[self.active_frame].undo();
@@ -1002,6 +1409,67 @@ impl eframe::App for IconEditorApp {
             self.frames[self.active_frame].redo();
         }
 
+        ctx.input_mut(|i| {
+            if i.modifiers.ctrl && !i.modifiers.alt && !i.modifiers.shift {
+                if i.consume_key(egui::Modifiers::CTRL, egui::Key::Z) {
+                    trigger_undo = true;
+                } else if i.consume_key(egui::Modifiers::CTRL, egui::Key::Y) {
+                    trigger_redo = true;
+                } else if i.consume_key(egui::Modifiers::CTRL, egui::Key::X) {
+                    trigger_cut = true;
+                } else if i.consume_key(egui::Modifiers::CTRL, egui::Key::C) {
+                    trigger_copy = true;
+                } else if i.consume_key(egui::Modifiers::CTRL, egui::Key::V) {
+                    trigger_paste = true;
+                }
+            }
+        });
+
+        if trigger_undo {
+            self.edit_undo();
+        }
+        if trigger_redo {
+            self.edit_redo();
+        }
+        if trigger_cut {
+            self.edit_cut();
+        }
+        if trigger_copy {
+            self.edit_copy();
+        }
+        if trigger_paste {
+            self.edit_paste();
+        }
+
+        let mut trigger_select_all = false;
+        let mut trigger_deselect = false;
+        let mut trigger_clear_sel = false;
+
+        ctx.input_mut(|i| {
+            if i.key_pressed(egui::Key::Escape) {
+                trigger_deselect = true;
+            }
+            if i.key_pressed(egui::Key::Delete) {
+                trigger_clear_sel = true;
+            }
+            if i.modifiers.ctrl && !i.modifiers.alt && !i.modifiers.shift {
+                if i.consume_key(egui::Modifiers::CTRL, egui::Key::A) {
+                    trigger_select_all = true;
+                }
+            }
+        });
+
+        if trigger_select_all {
+            self.select_all();
+        }
+        if trigger_deselect {
+            self.deselect();
+        }
+        if trigger_clear_sel {
+            self.clear_selection_pixels();
+        }
+
+
         // Actualizăm texturile pentru preview
         for (idx, f) in self.frames.iter_mut().enumerate() {
             f.update_texture(ctx, idx);
@@ -1009,38 +1477,137 @@ impl eframe::App for IconEditorApp {
 
         // 1. BARA DE MENIU SUS
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.heading("DOT");
-                ui.separator();
+            egui::menu::bar(ui, |ui| {
+                //ui.heading("DOT");
+                //ui.separator();
 
-                if ui.button("Nou").clicked() {
-                    *self = Self::default();
-                }
-                if ui.button("Importa Imagine").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Imagini", &["png", "jpg", "jpeg", "bmp"])
-                        .pick_file()
-                    {
-                        self.import_png(&path);
+                ui.menu_button("File", |ui| {
+                    if ui.add(egui::Button::new("New").shortcut_text("Ctrl+N")).clicked() {
+                        *self = Self::default();
+                        ui.close_menu();
                     }
-                }
-                if ui.button("Deschide .ICO").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Windows Icon", &["ico"])
-                        .pick_file()
-                    {
-                        self.open_ico(&path);
+                    if ui.add(egui::Button::new("Open").shortcut_text("Ctrl+O")).clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Windows Icon", &["ico"])
+                            .pick_file()
+                        {
+                            self.open_ico(&path);
+                        }
+                        ui.close_menu();
                     }
-                }
-                if ui.button("Salveaza .ICO").clicked() {
-                    if let Some(path) = rfd::FileDialog::new()
-                        .set_file_name("icon.ico")
-                        .add_filter("Windows Icon", &["ico"])
-                        .save_file()
-                    {
-                        self.save_ico(&path);
+                    if ui.add(egui::Button::new("Save").shortcut_text("Ctrl+S")).clicked() {
+                        self.save_current_ico();
+                        ui.close_menu();
                     }
-                }
+                    if ui.add(egui::Button::new("Save As").shortcut_text("Ctrl+Shift+S")).clicked() {
+                        self.save_ico_as();
+                        ui.close_menu();
+                    }
+                    if ui.add(egui::Button::new("Close").shortcut_text("Ctrl+W")).clicked() {
+                        self.close_file();
+                        ui.close_menu();
+                    }
+
+                    ui.separator();
+
+                    ui.menu_button("Import", |ui| {
+                        if ui.add(egui::Button::new("Image (PNG / JPG / BMP)...").shortcut_text("Ctrl+I")).clicked() {
+                            if let Some(path) = rfd::FileDialog::new()
+                                .add_filter("Imagini", &["png", "jpg", "jpeg", "bmp"])
+                                .pick_file()
+                            {
+                                self.import_png(&path);
+                            }
+                            ui.close_menu();
+                        }
+                    });
+
+                    ui.menu_button("Export", |ui| {
+                        if ui.add(egui::Button::new("Active Frame as PNG...").shortcut_text("Ctrl+E")).clicked() {
+                            self.export_active_png();
+                            ui.close_menu();
+                        }
+                        if ui.add(egui::Button::new("Windows ICO Set (32/8/4-bit)...").shortcut_text("Ctrl+Shift+E")).clicked() {
+                            self.generate_full_windows_set();
+                            self.save_ico_as();
+                            ui.close_menu();
+                        }
+                    });
+
+                    ui.separator();
+
+                    if ui.add(egui::Button::new("Exit")).clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                        ui.close_menu();
+                    }
+                });
+
+                ui.menu_button("Edit", |ui| {
+                    if ui.add(egui::Button::new("Undo").shortcut_text("Ctrl+Z")).clicked() {
+                        self.edit_undo();
+                        ui.close_menu();
+                    }
+                    if ui.add(egui::Button::new("Redo").shortcut_text("Ctrl+Y")).clicked() {
+                        self.edit_redo();
+                        ui.close_menu();
+                    }
+
+                    ui.separator();
+
+                    if ui.add(egui::Button::new("Cut").shortcut_text("Ctrl+X")).clicked() {
+                        self.edit_cut();
+                        ui.close_menu();
+                    }
+                    if ui.add(egui::Button::new("Copy").shortcut_text("Ctrl+C")).clicked() {
+                        self.edit_copy();
+                        ui.close_menu();
+                    }
+                    if ui.add(egui::Button::new("Paste").shortcut_text("Ctrl+V")).clicked() {
+                        self.edit_paste();
+                        ui.close_menu();
+                    }
+                });
+
+                ui.menu_button("Select", |ui| {
+                    let is_rect = self.tool == Tool::SelectRect;
+                    if ui.selectable_label(is_rect, "Rectangle").clicked() {
+                        self.tool = Tool::SelectRect;
+                        self.status_msg = "Unealta activa: Rectangle Select. Trage pe grid.".to_string();
+                        ui.close_menu();
+                    }
+
+                    ui.separator();
+
+                    if ui
+                        .add(egui::Button::new("Select All").shortcut_text("Ctrl+A"))
+                        .clicked()
+                    {
+                        self.select_all();
+                        ui.close_menu();
+                    }
+                    if ui
+                        .add(egui::Button::new("Deselect").shortcut_text("Esc"))
+                        .clicked()
+                    {
+                        self.deselect();
+                        ui.close_menu();
+                    }
+
+                    ui.separator();
+
+                    let has_sel = self.selection.is_some();
+                    if ui
+                        .add_enabled(
+                            has_sel,
+                            egui::Button::new("Clear Selection").shortcut_text("Del"),
+                        )
+                        .clicked()
+                    {
+                        self.clear_selection_pixels();
+                        ui.close_menu();
+                    }
+                });
+
             });
         });
 
@@ -1056,6 +1623,14 @@ impl eframe::App for IconEditorApp {
                 ));
                 ui.separator();
                 ui.label(&self.status_msg);
+
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let Some((x, y)) = self.hovered_coord {
+                        ui.monospace(format!("X: {x}, Y: {y}"));
+                    } else {
+                        ui.monospace("X: —, Y: —");
+                    }
+                });
             });
         });
 
@@ -1064,10 +1639,25 @@ impl eframe::App for IconEditorApp {
             .min_width(200.0)
             .show(ctx, |ui| {
                 ui.heading("Unelte");
-                ui.selectable_value(&mut self.tool, Tool::Pencil, "Creion (Desen)");
-                ui.selectable_value(&mut self.tool, Tool::Eraser, "Radiera (Transparent)");
-                ui.selectable_value(&mut self.tool, Tool::Fill, "Galeata (Flood Fill)");
-                ui.selectable_value(&mut self.tool, Tool::Eyedropper, "Pipeta (Alege culoare)");
+                ui.horizontal(|ui| {
+                    if tool_button(ui, self.tool == Tool::Pencil, "Creion (Desen)", draw_pencil_icon) {
+                        self.tool = Tool::Pencil;
+                    }
+                    if tool_button(ui, self.tool == Tool::Eraser, "Radiera (Transparent)", draw_eraser_icon) {
+                        self.tool = Tool::Eraser;
+                    }
+                    if tool_button(ui, self.tool == Tool::Fill, "Galeata (Flood Fill)", draw_fill_icon) {
+                        self.tool = Tool::Fill;
+                    }
+                    if tool_button(ui, self.tool == Tool::Eyedropper, "Pipeta (Alege culoare)", draw_eyedropper_icon) {
+                        self.tool = Tool::Eyedropper;
+                    }
+                    if tool_button(ui, self.tool == Tool::SelectRect, "Selectie Dreptunghi", draw_select_rect_icon) {
+                        self.tool = Tool::SelectRect;
+                    }
+                });
+
+                
 
                 ui.separator();
                 ui.heading("Culoare");
@@ -1218,124 +1808,247 @@ impl eframe::App for IconEditorApp {
         let checker_tex_id = self.get_checker_texture(ctx);
 
         egui::CentralPanel::default().show(ctx, |ui| {
-            egui::ScrollArea::both().show(ui, |ui| {
-                let frame = &mut self.frames[self.active_frame];
-                let canvas_w = frame.width as f32 * self.zoom;
-                let canvas_h = frame.height as f32 * self.zoom;
+            // Zoom cu Ctrl + Scroll
+            let scroll_delta_y = ctx.input(|i| {
+                if i.modifiers.ctrl {
+                    i.smooth_scroll_delta.y
+                } else {
+                    0.0
+                }
+            });
+            if scroll_delta_y.abs() > 0.0 {
+                let factor = if scroll_delta_y > 0.0 { 1.12 } else { 0.89 };
+                self.zoom = (self.zoom * factor).clamp(2.0, 32.0);
+            }
 
-                let (rect, response) = ui.allocate_exact_size(
-                    egui::vec2(canvas_w, canvas_h),
-                    egui::Sense::click_and_drag(),
-                );
+            egui::ScrollArea::both()
+                .drag_to_scroll(false)
+                .show(ui, |ui| {
+                    let frame = &mut self.frames[self.active_frame];
+                    let canvas_w = frame.width as f32 * self.zoom;
+                    let canvas_h = frame.height as f32 * self.zoom;
 
-                let painter = ui.painter_at(rect);
+                    // Centrăm canvas-ul dacă spațiul disponibil este mai mare decât el
+                    let avail = ui.available_size();
+                    let pad_x = ((avail.x - canvas_w) * 0.5).max(8.0);
+                    let pad_y = ((avail.y - canvas_h) * 0.5).max(8.0);
 
-                // 1. Fundalul șah (1 singur dreptunghi GPU repetat)
-                let uv_checker = egui::Rect::from_min_max(
-                    egui::pos2(0.0, 0.0),
-                    egui::pos2(frame.width as f32 / 2.0, frame.height as f32 / 2.0),
-                );
-                painter.image(checker_tex_id, rect, uv_checker, egui::Color32::WHITE);
-
-                // 2. Stratul de pixeli al iconiței (1 singură textură NEAREST)
-                if let Some(tex) = &frame.texture {
-                    painter.image(
-                        tex.id(),
-                        rect,
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
+                    let (_, outer_rect) = ui.allocate_exact_size(
+                        egui::vec2(canvas_w + pad_x * 2.0, canvas_h + pad_y * 2.0),
+                        egui::Sense::hover(),
                     );
-                }
+                    let canvas_rect = egui::Rect::from_min_size(
+                        egui::pos2(outer_rect.rect.min.x + pad_x, outer_rect.rect.min.y + pad_y),
+                        egui::vec2(canvas_w, canvas_h),
+                    );
 
-                // 3. Liniile de grid (doar cele vizibile în viewport)
-                if self.show_grid && self.zoom >= 6.0 {
-                    let grid_stroke = egui::Stroke::new(0.5_f32, egui::Color32::from_gray(75));
-                    let clip = painter.clip_rect();
+                    let response = ui.interact(
+                        canvas_rect,
+                        ui.id().with("dot_pixel_canvas"),
+                        egui::Sense::click_and_drag(),
+                    );
 
-                    let start_x =
-                        (((clip.min.x - rect.min.x) / self.zoom).floor() as i32).max(0) as u32;
-                    let end_x = (((clip.max.x - rect.min.x) / self.zoom).ceil() as i32)
-                        .min(frame.width as i32)
-                        .max(0) as u32;
+                    let painter = ui.painter_at(canvas_rect);
 
-                    let start_y =
-                        (((clip.min.y - rect.min.y) / self.zoom).floor() as i32).max(0) as u32;
-                    let end_y = (((clip.max.y - rect.min.y) / self.zoom).ceil() as i32)
-                        .min(frame.height as i32)
-                        .max(0) as u32;
+                    // 1. Fundalul șah (1 singur dreptunghi GPU repetat)
+                    let uv_checker = egui::Rect::from_min_max(
+                        egui::pos2(0.0, 0.0),
+                        egui::pos2(frame.width as f32 / 2.0, frame.height as f32 / 2.0),
+                    );
+                    painter.image(checker_tex_id, canvas_rect, uv_checker, egui::Color32::WHITE);
 
-                    let y_min = clip.min.y.max(rect.min.y);
-                    let y_max = clip.max.y.min(rect.max.y);
-                    for x in start_x..=end_x {
-                        let px = rect.min.x + x as f32 * self.zoom;
-                        painter
-                            .line_segment([egui::pos2(px, y_min), egui::pos2(px, y_max)], grid_stroke);
+                    // 2. Stratul de pixeli al iconiței (1 singură textură NEAREST)
+                    if let Some(tex) = &frame.texture {
+                        painter.image(
+                            tex.id(),
+                            canvas_rect,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
                     }
 
-                    let x_min = clip.min.x.max(rect.min.x);
-                    let x_max = clip.max.x.min(rect.max.x);
-                    for y in start_y..=end_y {
-                        let py = rect.min.y + y as f32 * self.zoom;
-                        painter
-                            .line_segment([egui::pos2(x_min, py), egui::pos2(x_max, py)], grid_stroke);
+                    // 3. Liniile de grid (doar cele vizibile în viewport)
+                    if self.show_grid && self.zoom >= 6.0 {
+                        let grid_stroke = egui::Stroke::new(0.5_f32, egui::Color32::from_gray(75));
+                        let clip = painter.clip_rect();
+
+                        let start_x = (((clip.min.x - canvas_rect.min.x) / self.zoom).floor()
+                            as i32)
+                            .max(0) as u32;
+                        let end_x = (((clip.max.x - canvas_rect.min.x) / self.zoom).ceil() as i32)
+                            .min(frame.width as i32)
+                            .max(0) as u32;
+
+                        let start_y = (((clip.min.y - canvas_rect.min.y) / self.zoom).floor()
+                            as i32)
+                            .max(0) as u32;
+                        let end_y = (((clip.max.y - canvas_rect.min.y) / self.zoom).ceil() as i32)
+                            .min(frame.height as i32)
+                            .max(0) as u32;
+
+                        let y_min = clip.min.y.max(canvas_rect.min.y);
+                        let y_max = clip.max.y.min(canvas_rect.max.y);
+                        for x in start_x..=end_x {
+                            let px = canvas_rect.min.x + x as f32 * self.zoom;
+                            painter.line_segment(
+                                [egui::pos2(px, y_min), egui::pos2(px, y_max)],
+                                grid_stroke,
+                            );
+                        }
+
+                        let x_min = clip.min.x.max(canvas_rect.min.x);
+                        let x_max = clip.max.x.min(canvas_rect.max.x);
+                        for y in start_y..=end_y {
+                            let py = canvas_rect.min.y + y as f32 * self.zoom;
+                            painter.line_segment(
+                                [egui::pos2(x_min, py), egui::pos2(x_max, py)],
+                                grid_stroke,
+                            );
+                        }
                     }
-                }
 
-                // Interacțiune mouse pe canvas
-                if response.drag_started() {
-                    if matches!(self.tool, Tool::Pencil | Tool::Eraser) {
-                        frame.push_undo();
+                    // Chenar discret în jurul iconiței
+                    painter.rect_stroke(
+                        canvas_rect.expand(1.0_f32),
+                        0.0,
+                        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(95)),
+                    );
+
+                    // Desenăm chenarul de selecție dacă există o selecție activă
+                    if let Some((x0, y0, x1, y1)) = self.selection {
+                        let sel_rect = egui::Rect::from_min_max(
+                            egui::pos2(
+                                canvas_rect.min.x + x0 as f32 * self.zoom,
+                                canvas_rect.min.y + y0 as f32 * self.zoom,
+                            ),
+                            egui::pos2(
+                                canvas_rect.min.x + (x1 + 1) as f32 * self.zoom,
+                                canvas_rect.min.y + (y1 + 1) as f32 * self.zoom,
+                            ),
+                        );
+                        painter.rect_filled(
+                            sel_rect,
+                            0.0,
+                            egui::Color32::from_rgba_unmultiplied(255, 255, 255, 14),
+                        );
+                        painter.rect_stroke(
+                            sel_rect,
+                            0.0,
+                            egui::Stroke::new(1.0_f32, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 190)),
+                        );
+                        painter.rect_stroke(
+                            sel_rect.expand(1.0_f32),
+                            0.0,
+                            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(255, 59, 48)),
+                        );
                     }
-                }
 
-                if response.clicked() || response.dragged() {
-                    if let Some(pos) = response.interact_pointer_pos() {
-                        let gx = ((pos.x - rect.min.x) / self.zoom).floor() as i32;
-                        let gy = ((pos.y - rect.min.y) / self.zoom).floor() as i32;
+                    // Coordonata pixelului de sub cursor (pentru hover & desen)
+                    let pointer_pos = response
+                        .interact_pointer_pos()
+                        .or_else(|| response.hover_pos());
 
-                        if gx >= 0 && gx < frame.width as i32 && gy >= 0 && gy < frame.height as i32
+                    self.hovered_coord = None;
+
+                    if let Some(pos) = pointer_pos {
+                        let gx = ((pos.x - canvas_rect.min.x) / self.zoom).floor() as i32;
+                        let gy = ((pos.y - canvas_rect.min.y) / self.zoom).floor() as i32;
+
+                        if gx >= 0
+                            && gx < frame.width as i32
+                            && gy >= 0
+                            && gy < frame.height as i32
                         {
-                            match self.tool {
-                                Tool::Pencil | Tool::Eraser => {
-                                    let draw_col = if self.tool == Tool::Pencil {
-                                        self.primary_color
-                                    } else {
-                                        [0, 0, 0, 0]
-                                    };
-                                    let (sx, sy) = self.last_draw_pos.unwrap_or((gx, gy));
-                                    plot_line(sx, sy, gx, gy, |px, py| {
-                                        if px >= 0
-                                            && px < frame.width as i32
-                                            && py >= 0
-                                            && py < frame.height as i32
-                                        {
-                                            frame.set_pixel(px as u32, py as u32, draw_col);
-                                        }
-                                    });
+                            self.hovered_coord = Some((gx as u32, gy as u32));
+
+                            // Evidențiem pixelul de sub cursor
+                            let px_rect = egui::Rect::from_min_size(
+                                egui::pos2(
+                                    canvas_rect.min.x + gx as f32 * self.zoom,
+                                    canvas_rect.min.y + gy as f32 * self.zoom,
+                                ),
+                                egui::vec2(self.zoom, self.zoom),
+                            );
+                            painter.rect_stroke(
+                                px_rect,
+                                0.0,
+                                egui::Stroke::new(1.0_f32, egui::Color32::WHITE),
+                            );
+
+                            // Pregătire început drag
+                            if response.drag_started() {
+                                if matches!(self.tool, Tool::Pencil | Tool::Eraser) {
+                                    frame.push_undo();
                                     self.last_draw_pos = Some((gx, gy));
+                                } else if self.tool == Tool::SelectRect {
+                                    self.select_drag_start = Some((gx, gy));
                                 }
-                                Tool::Fill => {
-                                    if response.clicked() {
-                                        frame.push_undo();
-                                        frame.flood_fill(gx as u32, gy as u32, self.primary_color);
+                            }
+
+                            if response.clicked() || response.dragged() {
+                                match self.tool {
+                                    Tool::SelectRect => {
+                                        if self.select_drag_start.is_none() {
+                                            self.select_drag_start = Some((gx, gy));
+                                        }
+                                        let start = self.select_drag_start.unwrap_or((gx, gy));
+                                        let min_x =
+                                            start.0.min(gx).clamp(0, frame.width as i32 - 1) as u32;
+                                        let min_y =
+                                            start.1.min(gy).clamp(0, frame.height as i32 - 1) as u32;
+                                        let max_x =
+                                            start.0.max(gx).clamp(0, frame.width as i32 - 1) as u32;
+                                        let max_y =
+                                            start.1.max(gy).clamp(0, frame.height as i32 - 1) as u32;
+                                        self.selection = Some((min_x, min_y, max_x, max_y));
                                     }
-                                }
-                                Tool::Eyedropper => {
-                                    self.primary_color = frame.get_pixel(gx as u32, gy as u32);
-                                    self.tool = Tool::Pencil;
+                                    Tool::Pencil | Tool::Eraser => {
+                                        let draw_col = if self.tool == Tool::Pencil {
+                                            self.primary_color
+                                        } else {
+                                            [0, 0, 0, 0]
+                                        };
+                                        let (sx, sy) = self.last_draw_pos.unwrap_or((gx, gy));
+                                        plot_line(sx, sy, gx, gy, |px, py| {
+                                            if px >= 0
+                                                && px < frame.width as i32
+                                                && py >= 0
+                                                && py < frame.height as i32
+                                            {
+                                                frame.set_pixel(px as u32, py as u32, draw_col);
+                                            }
+                                        });
+                                        self.last_draw_pos = Some((gx, gy));
+                                    }
+                                    Tool::Fill => {
+                                        if response.clicked() {
+                                            frame.push_undo();
+                                            frame.flood_fill(
+                                                gx as u32,
+                                                gy as u32,
+                                                self.primary_color,
+                                            );
+                                        }
+                                    }
+                                    Tool::Eyedropper => {
+                                        self.primary_color = frame.get_pixel(gx as u32, gy as u32);
+                                        self.tool = Tool::Pencil;
+                                    }
                                 }
                             }
                         }
                     }
-                }
 
-                if response.drag_stopped() {
-                    self.last_draw_pos = None;
-                }
-            });
+                    if response.drag_stopped() {
+                        self.last_draw_pos = None;
+                        self.select_drag_start = None;
+                    }
+                });
         });
     }
 }
+
+
 
 fn main() -> eframe::Result<()> {
     let startup_path = std::env::args().nth(1).map(PathBuf::from);
