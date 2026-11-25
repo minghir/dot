@@ -8,6 +8,17 @@ pub use eval::{eval_program, Value};
 pub use lexer::{tokenize, Token, TokenKind};
 use std::collections::HashMap;
 
+#[derive(Debug, Clone)]
+pub struct StructDef {
+    pub fields: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct UserFn {
+    pub params: Vec<String>,
+    pub body: Vec<ast::Stmt>,
+}
+
 pub struct CanvasBuffer<'a> {
     pub width: u32,
     pub height: u32,
@@ -59,6 +70,9 @@ pub struct EvalContext<'a> {
     pub canvas: CanvasBuffer<'a>,
     pub output: Vec<String>,
     pub vars: HashMap<String, Value>,
+    pub funcs: std::collections::HashMap<String, UserFn>,
+    pub structs: std::collections::HashMap<String, StructDef>,
+    pub call_depth: usize,
 }
 
 /// Parsează o culoare hex: #rgb, #rgba, #rrggbb sau #rrggbbaa.

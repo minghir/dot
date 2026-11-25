@@ -1,0 +1,44 @@
+let w = width()
+let h = height()
+
+# Fundal întunecat
+rect(#060412ff, 0, 0, w, h)
+
+struct Brush {
+    color,
+    size
+}
+
+func lerp(a, b, t) {
+    return a + (b - a) * t
+}
+
+func draw_spiral(brush, cx, cy, max_r, turns, steps, col_start, col_end) {
+    for i in 0..=steps {
+        let t = i / (steps * 1.0)
+        let angle = t * turns * 2.0 * pi()
+        let r = lerp(2.0, max_r, t)
+
+        let x = cx + cos(angle) * r
+        let y = cy + sin(angle) * r
+
+        brush.color = mix(col_start, col_end, t)
+        brush.size = lerp(1.0, 4.0, t)
+
+        circle(brush.color, x, y, brush.size, 1)
+    }
+}
+
+let b = Brush {
+    color: #00f5d4ff,
+    size: 1.0
+}
+
+let cx = w * 0.5
+let cy = h * 0.5
+let max_r = min(w, h) * 0.44
+
+# Spirală principală (4 ture, 320 de pași)
+draw_spiral(b, cx, cy, max_r, 4.0, 320, #00f5d4ff, #ff2a85ff)
+
+echo("Spirala finalizata | ultima pensula:", b)

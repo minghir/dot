@@ -1,6 +1,9 @@
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
     Let,
+    Func,
+    Struct,
+    Return,
     If,
     Else,
     While,
@@ -8,6 +11,8 @@ pub enum TokenKind {
     In,
     DotDot,
     DotDotEq,
+    Dot,
+    Colon,
     Break,
     Continue,
     Ident(String),
@@ -183,6 +188,9 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
             let ident: String = chars[start..i].iter().collect();
             let kind = match ident.as_str() {
                 "let" => TokenKind::Let,
+                "func" => TokenKind::Func,
+                "struct" => TokenKind::Struct,
+                "return" => TokenKind::Return,
                 "if" => TokenKind::If,
                 "else" => TokenKind::Else,
                 "while" => TokenKind::While,
@@ -301,6 +309,10 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                 tokens.push(Token { kind: TokenKind::Percent, line });
                 i += 1;
             }
+            ':' => {
+                tokens.push(Token { kind: TokenKind::Colon, line });
+                i += 1;
+            }
             '.' => {
                 if i + 1 < chars.len() && chars[i + 1] == '.' {
                     if i + 2 < chars.len() && chars[i + 2] == '=' {
@@ -311,7 +323,8 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, String> {
                         i += 2;
                     }
                 } else {
-                    return Err(format!("Linia {line}: caracter neașteptat '.'"));
+                    tokens.push(Token { kind: TokenKind::Dot, line });
+                    i += 1;
                 }
             }
             other => {

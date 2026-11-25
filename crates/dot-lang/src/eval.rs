@@ -1,4 +1,4 @@
-use crate::ast::{BinaryOp, Expr, ForSource, Program, Stmt};
+use crate::ast::{BinaryOp, Expr, ForSource, PlaceStep, Program, Stmt};
 use crate::func::eval_builtin;
 use crate::lexer::{tokenize, Token, TokenKind};
 use crate::{format_hex_rgba, parse_hex_color, EvalContext};
@@ -11,6 +11,10 @@ pub enum Value {
     Color([u8; 4]),
     Str(String),
     List(Vec<Value>),
+    Struct {
+        type_name: String,
+        fields: std::collections::HashMap<String, Value>,
+    },
     Nil,
 }
 
@@ -18,6 +22,7 @@ enum ControlFlow {
     Next,
     Break,
     Continue,
+    Return(Value),
 }
 
 impl Value {
@@ -85,6 +90,7 @@ impl Value {
             Value::Str(s) => !s.is_empty(),
             Value::Color(c) => c[3] > 0,
             Value::List(l) => !l.is_empty(),
+            Value::Struct { .. } => true,
             Value::Nil => false,
         }
     }
@@ -100,6 +106,14 @@ impl Value {
                 let inner: Vec<String> = items.iter().map(Value::format_for_echo).collect();
                 format!("[{}]", inner.join(", "))
             }
+            Value::Struct { type_name, fields } => {
+                let mut pairs: Vec<String> = fields
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {}", v.format_for_echo()))
+                    .collect();
+                pairs.sort();
+                format!("{type_name} {{ {} }}", pairs.join(", "))
+            }
             Value::Nil => "nil".to_string(),
         }
     }
@@ -111,6 +125,61 @@ struct Parser {
 }
 
 impl Parser {
+    fn parse_func_decl(&mut self) -> Result<Stmt, String> {
+        let func_tok = self.advance(); // consumă 'func'
+        let name = match self.advance().kind {
+            TokenKind::Ident(n) => n,
+            _ => {
+                return Err(format!(
+                    "Linia {}: așteptat nume de funcție după 'func'",
+                    func_tok.line
+                ))
+            }
+        };
+
+        if !matches!(self.advance().kind, TokenKind::LParen) {
+            return Err(format!(
+                "Linia {}: așteptat '(' după numele funcției '{name}'",
+                func_tok.line
+            ));
+        }
+
+        let mut params = Vec::new();
+        while !matches!(self.current().kind, TokenKind::RParen | TokenKind::Eof) {
+            match self.advance().kind {
+                TokenKind::Ident(param_name) => params.push(param_name),
+                _ => {
+                    return Err(format!(
+                        "Linia {}: așteptat nume de parametru în declarația funcției '{name}'",
+                        func_tok.line
+                    ))
+                }
+            }
+            if matches!(self.current().kind, TokenKind::Comma) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        if !matches!(self.advance().kind, TokenKind::RParen) {
+            return Err(format!(
+                "Linia {}: așteptat ')' după parametrii funcției '{name}'",
+                func_tok.line
+            ));
+        }
+
+        let body = self.parse_block()?;
+        self.skip_separators();
+
+        Ok(Stmt::FuncDecl {
+            name,
+            params,
+            body,
+            line: func_tok.line,
+        })
+    }
+
     fn new(tokens: Vec<Token>) -> Self {
         Self { tokens, pos: 0 }
     }
@@ -185,35 +254,56 @@ impl Parser {
                 self.skip_separators();
                 Ok(Stmt::Assign { name, value })
             }
-            TokenKind::Ident(ref name) if matches!(self.peek(1).kind, TokenKind::LBracket) => {
+            TokenKind::Ident(ref name)
+                if matches!(self.peek(1).kind, TokenKind::LBracket | TokenKind::Dot) =>
+            {
                 let name = name.clone();
                 let stmt_line = self.current().line;
                 let saved_pos = self.pos;
                 self.advance(); // consumă Ident
 
-                let mut indices = Vec::new();
-                while matches!(self.current().kind, TokenKind::LBracket) {
-                    let bracket_line = self.current().line;
-                    self.advance(); // consumă '['
-                    indices.push(self.parse_expr()?);
-                    if !matches!(self.advance().kind, TokenKind::RBracket) {
-                        return Err(format!(
-                            "Linia {bracket_line}: așteptat ']' la asignarea pe index"
-                        ));
+                let mut path = Vec::new();
+                loop {
+                    match self.current().kind {
+                        TokenKind::LBracket => {
+                            let bracket_line = self.current().line;
+                            self.advance(); // '['
+                            let idx = self.parse_expr()?;
+                            if !matches!(self.advance().kind, TokenKind::RBracket) {
+                                return Err(format!(
+                                    "Linia {bracket_line}: așteptat ']' la indexare"
+                                ));
+                            }
+                            path.push(PlaceStep::Index(idx));
+                        }
+                        TokenKind::Dot => {
+                            let dot_line = self.current().line;
+                            self.advance(); // '.'
+                            match self.advance().kind {
+                                TokenKind::Ident(field) => path.push(PlaceStep::Field(field)),
+                                _ => {
+                                    return Err(format!(
+                                        "Linia {dot_line}: așteptat nume de câmp după '.'"
+                                    ))
+                                }
+                            }
+                        }
+                        _ => break,
                     }
                 }
 
                 if matches!(self.current().kind, TokenKind::Eq) {
-                    self.advance(); // consumă '='
+                    self.advance(); // '='
                     let value = self.parse_expr()?;
                     self.skip_separators();
-                    Ok(Stmt::IndexAssign {
+                    Ok(Stmt::PlaceAssign {
                         target: name,
-                        indices,
+                        path,
                         value,
                         line: stmt_line,
                     })
                 } else {
+                    // Nu e asignare (ex: `list[0]` sau `b.size` ca expresie), revenim
                     self.pos = saved_pos;
                     let expr = self.parse_expr()?;
                     self.skip_separators();
@@ -233,12 +323,94 @@ impl Parser {
                 self.skip_separators();
                 Ok(Stmt::Continue)
             }
+            TokenKind::Func => self.parse_func_decl(),
+            TokenKind::Return => {
+                let ret_tok = self.advance(); // consumă 'return'
+                let next_tok = self.current();
+                let has_expr = !matches!(
+                    next_tok.kind,
+                    TokenKind::RBrace | TokenKind::Semicolon | TokenKind::Eof
+                ) && next_tok.line == ret_tok.line;
+
+                let value = if has_expr {
+                    Some(self.parse_expr()?)
+                } else {
+                    None
+                };
+                self.skip_separators();
+                Ok(Stmt::Return {
+                    value,
+                    line: ret_tok.line,
+                })
+            }
+            TokenKind::Struct => self.parse_struct_decl(),
             _ => {
                 let expr = self.parse_expr()?;
                 self.skip_separators();
                 Ok(Stmt::ExprStmt(expr))
             }
         }
+    }
+
+    fn parse_struct_decl(&mut self) -> Result<Stmt, String> {
+        let struct_tok = self.advance(); // consumă 'struct'
+        let name = match self.advance().kind {
+            TokenKind::Ident(n) => n,
+            _ => {
+                return Err(format!(
+                    "Linia {}: așteptat nume de struct după 'struct'",
+                    struct_tok.line
+                ))
+            }
+        };
+
+        if !matches!(self.advance().kind, TokenKind::LBrace) {
+            return Err(format!(
+                "Linia {}: așteptat '{{' după numele struct-ului '{name}'",
+                struct_tok.line
+            ));
+        }
+
+        let mut fields = Vec::new();
+        while !matches!(self.current().kind, TokenKind::RBrace | TokenKind::Eof) {
+            let field_tok = self.advance();
+            let field_name = match field_tok.kind {
+                TokenKind::Ident(f) => f,
+                _ => {
+                    return Err(format!(
+                        "Linia {}: așteptat nume de câmp în struct '{name}'",
+                        field_tok.line
+                    ))
+                }
+            };
+            if fields.contains(&field_name) {
+                return Err(format!(
+                    "Linia {}: câmpul '{field_name}' este duplicat în struct '{name}'",
+                    field_tok.line
+                ));
+            }
+            fields.push(field_name);
+
+            if matches!(self.current().kind, TokenKind::Comma | TokenKind::Semicolon) {
+                self.advance();
+            } else {
+                break;
+            }
+        }
+
+        if !matches!(self.advance().kind, TokenKind::RBrace) {
+            return Err(format!(
+                "Linia {}: așteptat '}}' la finalul declarației struct '{name}'",
+                struct_tok.line
+            ));
+        }
+
+        self.skip_separators();
+        Ok(Stmt::StructDecl {
+            name,
+            fields,
+            line: struct_tok.line,
+        })
     }
 
     fn parse_if(&mut self) -> Result<Stmt, String> {
@@ -483,10 +655,6 @@ impl Parser {
                 self.advance();
                 Expr::Str(s.clone())
             }
-            // Păstrează aici ramurile tale exacte din lexer.rs / ast.rs, de exemplu:
-            // TokenKind::HexColor(...) => { ... }
-            // TokenKind::True / TokenKind::False => { ... }
-            // TokenKind::Ident(name) => { ... apel funcție sau Expr::Var / Expr::Ident ... }
             TokenKind::LBracket => {
                 let bracket_line = tok.line;
                 self.advance(); // '['
@@ -542,6 +710,44 @@ impl Parser {
                         ));
                     }
                     Expr::Call { name, args }
+                } else if matches!(self.current().kind, TokenKind::LBrace)
+                    && name.starts_with(|c: char| c.is_ascii_uppercase())
+                {
+                    self.advance(); // '{'
+                    let mut fields = Vec::new();
+                    while !matches!(self.current().kind, TokenKind::RBrace | TokenKind::Eof) {
+                        let f_tok = self.advance();
+                        let field_name = match f_tok.kind {
+                            TokenKind::Ident(f) => f,
+                            _ => {
+                                return Err(format!(
+                                    "Linia {}: așteptat nume de câmp în instanțierea '{name}'",
+                                    f_tok.line
+                                ))
+                            }
+                        };
+                        if !matches!(self.advance().kind, TokenKind::Colon) {
+                            return Err(format!(
+                                "Linia {}: așteptat ':' după câmpul '{field_name}' în '{name}'",
+                                f_tok.line
+                            ));
+                        }
+                        let field_val = self.parse_expr()?;
+                        fields.push((field_name, field_val));
+
+                        if matches!(self.current().kind, TokenKind::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    if !matches!(self.advance().kind, TokenKind::RBrace) {
+                        return Err(format!(
+                            "Linia {}: așteptat '}}' la finalul instanțierii '{name}'",
+                            tok.line
+                        ));
+                    }
+                    Expr::StructInit { name, fields }
                 } else {
                     Expr::Var(name)
                 }
@@ -554,17 +760,38 @@ impl Parser {
             }
         };
 
-        while matches!(self.current().kind, TokenKind::LBracket) {
-            let bracket_line = self.current().line;
-            self.advance(); // '['
-            let index = self.parse_expr()?;
-            if !matches!(self.advance().kind, TokenKind::RBracket) {
-                return Err(format!("Linia {bracket_line}: așteptat ']' la indexare"));
+        loop {
+            match self.current().kind {
+                TokenKind::LBracket => {
+                    let bracket_line = self.current().line;
+                    self.advance(); // '['
+                    let index = self.parse_expr()?;
+                    if !matches!(self.advance().kind, TokenKind::RBracket) {
+                        return Err(format!("Linia {bracket_line}: așteptat ']' la indexare"));
+                    }
+                    expr = Expr::Index {
+                        target: Box::new(expr),
+                        index: Box::new(index),
+                    };
+                }
+                TokenKind::Dot => {
+                    let dot_line = self.current().line;
+                    self.advance(); // '.'
+                    let field = match self.advance().kind {
+                        TokenKind::Ident(f) => f,
+                        _ => {
+                            return Err(format!(
+                                "Linia {dot_line}: așteptat nume de câmp după '.'"
+                            ))
+                        }
+                    };
+                    expr = Expr::FieldAccess {
+                        target: Box::new(expr),
+                        field,
+                    };
+                }
+                _ => break,
             }
-            expr = Expr::Index {
-                target: Box::new(expr),
-                index: Box::new(index),
-            };
         }
 
         Ok(expr)
@@ -577,13 +804,16 @@ pub fn eval_program(source: &str, ctx: &mut EvalContext<'_>) -> Result<(), Strin
     let program = parser.parse_program()?;
 
     for stmt in &program.statements {
-        match eval_stmt(stmt, ctx, 1)? {
+       match eval_stmt(stmt, ctx, 1)? {
             ControlFlow::Next => {}
             ControlFlow::Break => {
                 return Err("'break' folosit în afara unei bucle".to_string());
             }
             ControlFlow::Continue => {
                 return Err("'continue' folosit în afara unei bucle".to_string());
+            }
+            ControlFlow::Return(_) => {
+                return Err("'return' folosit în afara unei funcții".to_string());
             }
         }
     }
@@ -594,7 +824,9 @@ fn eval_block(stmts: &[Stmt], ctx: &mut EvalContext<'_>, line: usize) -> Result<
     for s in stmts {
         match eval_stmt(s, ctx, line)? {
             ControlFlow::Next => {}
-            cf @ (ControlFlow::Break | ControlFlow::Continue) => return Ok(cf),
+            cf @ (ControlFlow::Break | ControlFlow::Continue | ControlFlow::Return(_)) => {
+                return Ok(cf)
+            }
         }
     }
     Ok(ControlFlow::Next)
@@ -617,31 +849,81 @@ fn eval_stmt(stmt: &Stmt, ctx: &mut EvalContext<'_>, line: usize) -> Result<Cont
             ctx.vars.insert(name.clone(), val);
             Ok(ControlFlow::Next)
         }
-        Stmt::IndexAssign {
+        Stmt::PlaceAssign {
             target,
-            indices,
+            path,
             value,
             line: stmt_line,
         } => {
             let l = *stmt_line;
             let new_val = eval_expr(value, ctx, l)?;
 
-            let mut resolved_indices = Vec::with_capacity(indices.len());
-            for idx_expr in indices {
-                let idx_val = eval_expr(idx_expr, ctx, l)?;
-                match idx_val {
-                    Value::Int(i) if i >= 0 => resolved_indices.push(i as usize),
-                    Value::Int(i) => {
-                        return Err(format!(
-                            "Linia {l}: index negativ {i} la asignarea în listă"
-                        ));
+            enum ResolvedStep {
+                Index(usize),
+                Field(String),
+            }
+
+            let mut resolved_path = Vec::with_capacity(path.len());
+            for step in path {
+                match step {
+                    PlaceStep::Index(idx_expr) => {
+                        let idx_val = eval_expr(idx_expr, ctx, l)?;
+                        match idx_val {
+                            Value::Int(i) if i >= 0 => {
+                                resolved_path.push(ResolvedStep::Index(i as usize))
+                            }
+                            Value::Int(i) => {
+                                return Err(format!("Linia {l}: index negativ {i} la asignare"));
+                            }
+                            other => {
+                                return Err(format!(
+                                    "Linia {l}: indexul trebuie să fie întreg, primit {:?}",
+                                    other
+                                ));
+                            }
+                        }
                     }
-                    other => {
-                        return Err(format!(
-                            "Linia {l}: indexul listei trebuie să fie întreg, primit {:?}",
-                            other
-                        ));
+                    PlaceStep::Field(f) => resolved_path.push(ResolvedStep::Field(f.clone())),
+                }
+            }
+
+            fn assign_along_path(
+                current: &mut Value,
+                steps: &[ResolvedStep],
+                new_val: Value,
+                line: usize,
+            ) -> Result<(), String> {
+                let Some((first, rest)) = steps.split_first() else {
+                    *current = new_val;
+                    return Ok(());
+                };
+
+                match (first, current) {
+                    (ResolvedStep::Index(idx), Value::List(list)) => {
+                        if *idx >= list.len() {
+                            return Err(format!(
+                                "Linia {line}: index {idx} în afara limitelor listei de lungime {}",
+                                list.len()
+                            ));
+                        }
+                        assign_along_path(&mut list[*idx], rest, new_val, line)
                     }
+                    (ResolvedStep::Index(_), other) => Err(format!(
+                        "Linia {line}: doar listele pot fi indexate cu [...], primit {:?}",
+                        other
+                    )),
+                    (ResolvedStep::Field(field), Value::Struct { type_name, fields }) => {
+                        let entry = fields.get_mut(field).ok_or_else(|| {
+                            format!(
+                                "Linia {line}: struct-ul '{type_name}' nu are câmpul '{field}'"
+                            )
+                        })?;
+                        assign_along_path(entry, rest, new_val, line)
+                    }
+                    (ResolvedStep::Field(field), other) => Err(format!(
+                        "Linia {line}: nu se poate accesa câmpul '.{field}' pe {:?}",
+                        other
+                    )),
                 }
             }
 
@@ -651,7 +933,7 @@ fn eval_stmt(stmt: &Stmt, ctx: &mut EvalContext<'_>, line: usize) -> Result<Cont
                 )
             })?;
 
-            assign_at_indices(root, &resolved_indices, new_val, l)?;
+            assign_along_path(root, &resolved_path, new_val, l)?;
             Ok(ControlFlow::Next)
         }
         Stmt::If {
@@ -681,6 +963,7 @@ fn eval_stmt(stmt: &Stmt, ctx: &mut EvalContext<'_>, line: usize) -> Result<Cont
                 match eval_block(body, ctx, line)? {
                     ControlFlow::Next | ControlFlow::Continue => {}
                     ControlFlow::Break => break,
+                    ret @ ControlFlow::Return(_) => return Ok(ret),
                 }
             }
             Ok(ControlFlow::Next)
@@ -736,6 +1019,7 @@ fn eval_stmt(stmt: &Stmt, ctx: &mut EvalContext<'_>, line: usize) -> Result<Cont
                         match eval_block(body, ctx, line)? {
                             ControlFlow::Next | ControlFlow::Continue => {}
                             ControlFlow::Break => break,
+                            ret @ ControlFlow::Return(_) => return Ok(ret),
                         }
                         cur += 1;
                     }
@@ -760,6 +1044,7 @@ fn eval_stmt(stmt: &Stmt, ctx: &mut EvalContext<'_>, line: usize) -> Result<Cont
                         match eval_block(body, ctx, line)? {
                             ControlFlow::Next | ControlFlow::Continue => {}
                             ControlFlow::Break => break,
+                            ret @ ControlFlow::Return(_) => return Ok(ret),
                         }
                     }
                 }
@@ -768,6 +1053,41 @@ fn eval_stmt(stmt: &Stmt, ctx: &mut EvalContext<'_>, line: usize) -> Result<Cont
         }
         Stmt::Break => Ok(ControlFlow::Break),
         Stmt::Continue => Ok(ControlFlow::Continue),
+        Stmt::FuncDecl {
+            name,
+            params,
+            body,
+            line: _,
+        } => {
+            ctx.funcs.insert(
+                name.clone(),
+                crate::UserFn {
+                    params: params.clone(),
+                    body: body.clone(),
+                },
+            );
+            Ok(ControlFlow::Next)
+        }
+        Stmt::StructDecl {
+            name,
+            fields,
+            line: _,
+        } => {
+            ctx.structs.insert(
+                name.clone(),
+                crate::StructDef {
+                    fields: fields.clone(),
+                },
+            );
+            Ok(ControlFlow::Next)
+        }
+        Stmt::Return { value, line: ret_line } => {
+            let val = match value {
+                Some(expr) => eval_expr(expr, ctx, *ret_line)?,
+                None => Value::Nil,
+            };
+            Ok(ControlFlow::Return(val))
+        }
         Stmt::ExprStmt(expr) => {
             let val = eval_expr(expr, ctx, line)?;
             if let Expr::Call { name, .. } = expr {
@@ -778,37 +1098,6 @@ fn eval_stmt(stmt: &Stmt, ctx: &mut EvalContext<'_>, line: usize) -> Result<Cont
             Ok(ControlFlow::Next)
         }
     }
-}
-
-fn assign_at_indices(
-    current: &mut Value,
-    indices: &[usize],
-    new_val: Value,
-    line: usize,
-) -> Result<(), String> {
-    let Some((&first, rest)) = indices.split_first() else {
-        *current = new_val;
-        return Ok(());
-    };
-
-    let items = match current {
-        Value::List(list) => list,
-        other => {
-            return Err(format!(
-                "Linia {line}: doar listele pot fi indexate cu [...], primit {:?}",
-                other
-            ));
-        }
-    };
-
-    if first >= items.len() {
-        return Err(format!(
-            "Linia {line}: index {first} în afara limitelor listei de lungime {}",
-            items.len()
-        ));
-    }
-
-    assign_at_indices(&mut items[first], rest, new_val, line)
 }
 
 pub(crate) fn eval_expr(expr: &Expr, ctx: &mut EvalContext<'_>, line: usize) -> Result<Value, String> {
@@ -828,6 +1117,56 @@ pub(crate) fn eval_expr(expr: &Expr, ctx: &mut EvalContext<'_>, line: usize) -> 
                 vals.push(eval_expr(item, ctx, line)?);
             }
             Ok(Value::List(vals))
+        }
+        Expr::StructInit { name, fields } => {
+            let def = ctx
+                .structs
+                .get(name)
+                .cloned()
+                .ok_or_else(|| format!("Linia {line}: struct nedefinit '{name}'"))?;
+
+            let mut instance_fields = std::collections::HashMap::with_capacity(def.fields.len());
+            for (field_name, field_expr) in fields {
+                if !def.fields.contains(field_name) {
+                    return Err(format!(
+                        "Linia {line}: struct-ul '{name}' nu are câmpul '{field_name}'"
+                    ));
+                }
+                if instance_fields.contains_key(field_name) {
+                    return Err(format!(
+                        "Linia {line}: câmpul '{field_name}' a fost specificat de două ori în '{name}'"
+                    ));
+                }
+                let val = eval_expr(field_expr, ctx, line)?;
+                instance_fields.insert(field_name.clone(), val);
+            }
+
+            for required_field in &def.fields {
+                if !instance_fields.contains_key(required_field) {
+                    return Err(format!(
+                        "Linia {line}: lipsește câmpul '{required_field}' la instanțierea struct-ului '{name}'"
+                    ));
+                }
+            }
+
+            Ok(Value::Struct {
+                type_name: name.clone(),
+                fields: instance_fields,
+            })
+        }
+        Expr::FieldAccess { target, field } => {
+            let target_val = eval_expr(target, ctx, line)?;
+            match target_val {
+                Value::Struct { type_name, fields } => fields.get(field).cloned().ok_or_else(|| {
+                    format!(
+                        "Linia {line}: struct-ul '{type_name}' nu are câmpul '{field}'"
+                    )
+                }),
+                other => Err(format!(
+                    "Linia {line}: doar valorile de tip struct au câmpuri ('.{field}'), primit {:?}",
+                    other
+                )),
+            }
         }
         Expr::Index { target, index } => {
             let target_val = eval_expr(target, ctx, line)?;
@@ -898,7 +1237,67 @@ pub(crate) fn eval_expr(expr: &Expr, ctx: &mut EvalContext<'_>, line: usize) -> 
                 eval_binary(op, l, r, line)
             }
         },
-        Expr::Call { name, args } => eval_builtin(name, args, ctx, line),
+        Expr::Call { name, args } => {
+            if let Some(user_fn) = ctx.funcs.get(name).cloned() {
+                eval_user_call(name, &user_fn, args, ctx, line)
+            } else {
+                eval_builtin(name, args, ctx, line)
+            }
+        }
+    }
+}
+
+const MAX_CALL_DEPTH: usize = 256;
+
+fn eval_user_call(
+    name: &str,
+    user_fn: &crate::UserFn,
+    arg_exprs: &[Expr],
+    ctx: &mut EvalContext<'_>,
+    line: usize,
+) -> Result<Value, String> {
+    if ctx.call_depth >= MAX_CALL_DEPTH {
+        return Err(format!(
+            "Linia {line}: adâncime maximă de recursivitate ({MAX_CALL_DEPTH}) depășită la apelul '{name}'"
+        ));
+    }
+
+    if arg_exprs.len() != user_fn.params.len() {
+        return Err(format!(
+            "Linia {line}: funcția '{name}' așteaptă {} argumente, primit {}",
+            user_fn.params.len(),
+            arg_exprs.len()
+        ));
+    }
+
+    // Evaluăm argumentele în contextul apelantului înainte de a schimba scope-ul
+    let mut evaluated_args = Vec::with_capacity(arg_exprs.len());
+    for expr in arg_exprs {
+        evaluated_args.push(eval_expr(expr, ctx, line)?);
+    }
+
+    // Izolăm variabilele locale ale apelului curent (păstrând vizibilitatea variabilelor existente)
+    let caller_vars = ctx.vars.clone();
+    for (param, val) in user_fn.params.iter().zip(evaluated_args) {
+        ctx.vars.insert(param.clone(), val);
+    }
+
+    ctx.call_depth += 1;
+    let body_res = eval_block(&user_fn.body, ctx, line);
+    ctx.call_depth -= 1;
+
+    // Restaurăm scope-ul apelantului (astfel apelurile recursive nu își suprascriu variabilele locale)
+    ctx.vars = caller_vars;
+
+    match body_res? {
+        ControlFlow::Next => Ok(Value::Nil),
+        ControlFlow::Return(val) => Ok(val),
+        ControlFlow::Break => Err(format!(
+            "Linia {line}: 'break' folosit în afara unei bucle în funcția '{name}'"
+        )),
+        ControlFlow::Continue => Err(format!(
+            "Linia {line}: 'continue' folosit în afara unei bucle în funcția '{name}'"
+        )),
     }
 }
 
@@ -980,6 +1379,15 @@ fn eval_binary(op: &BinaryOp, l: Value, r: Value, line: usize) -> Result<Value, 
 
 fn values_equal(l: &Value, r: &Value) -> bool {
     match (l, r) {
+        (
+        Value::Struct { type_name: t1, fields: f1 },
+        Value::Struct { type_name: t2, fields: f2 },
+        ) => {
+            t1 == t2
+                && f1.len() == f2.len()
+                && f1.iter()
+                    .all(|(k, v1)| f2.get(k).is_some_and(|v2| values_equal(v1, v2)))
+        }
         (Value::Int(a), Value::Int(b)) => a == b,
         (Value::Float(a), Value::Float(b)) => (a - b).abs() < f64::EPSILON,
         (Value::Int(a), Value::Float(b)) => ((*a as f64) - b).abs() < f64::EPSILON,

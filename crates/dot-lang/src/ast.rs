@@ -16,6 +16,12 @@ pub enum BinaryOp {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum PlaceStep {
+    Index(Expr),
+    Field(String),
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum Expr {
     Int(i64),
     Float(f64),
@@ -36,6 +42,14 @@ pub enum Expr {
     Call {
         name: String,
         args: Vec<Expr>,
+    },
+    StructInit {
+        name: String,
+        fields: Vec<(String, Expr)>,
+    },
+    FieldAccess {
+        target: Box<Expr>,
+        field: String,
     },
 }
 
@@ -59,10 +73,19 @@ pub enum Stmt {
         name: String,
         value: Expr,
     },
-    IndexAssign {
-        target: String,
-        indices: Vec<Expr>,
-        value: Expr,
+    FuncDecl {
+        name: String,
+        params: Vec<String>,
+        body: Vec<Stmt>,
+        line: usize,
+    },
+    StructDecl {
+        name: String,
+        fields: Vec<String>,
+        line: usize,
+    },
+    Return {
+        value: Option<Expr>,
         line: usize,
     },
     If {
@@ -81,6 +104,12 @@ pub enum Stmt {
     },
     Break,
     Continue,
+    PlaceAssign {
+        target: String,
+        path: Vec<PlaceStep>,
+        value: Expr,
+        line: usize,
+    },
     ExprStmt(Expr),
 }
 

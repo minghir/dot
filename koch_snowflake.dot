@@ -1,0 +1,75 @@
+let w = width()
+let h = height()
+
+# Fundal întunecat
+rect(#060412ff, 0, 0, w, h)
+
+# Funcție recursivă pentru un segment Koch
+func koch(x0, y0, x1, y1, depth, col_start, col_end) {
+    if depth <= 0 {
+        line(col_start, x0, y0, x1, y1)
+        return
+    }
+
+    let dx = (x1 - x0) / 3.0
+    let dy = (y1 - y0) / 3.0
+
+    # Punctele de împărțire la 1/3 și 2/3
+    let ax = x0 + dx
+    let ay = y0 + dy
+    let bx = x0 + dx * 2.0
+    let by = y0 + dy * 2.0
+
+    # Vârful triunghiului echilateral exterior (rotație -60 grade)
+    let angle = -pi() / 3.0
+    let px = ax + dx * cos(angle) - dy * sin(angle)
+    let py = ay + dx * sin(angle) + dy * cos(angle)
+
+    let mid_col = mix(col_start, col_end, 0.5)
+    let next_d = depth - 1
+
+    koch(x0, y0, ax, ay, next_d, col_start, mid_col)
+    koch(ax, ay, px, py, next_d, mid_col, col_end)
+    koch(px, py, bx, by, next_d, col_end, mid_col)
+    koch(bx, by, x1, y1, next_d, mid_col, col_start)
+}
+
+# Funcție helper care calculează distanța (testează și return cu valoare)
+func dist(x0, y0, x1, y1) {
+    let dx = x1 - x0
+    let dy = y1 - y0
+    return sqrt(dx * dx + dy * dy)
+}
+
+# Triunghiul echilateral de bază centrat în canvas
+let cx = w * 0.5
+let cy = h * 0.5
+let radius = min(w, h) * 0.38
+
+let a0 = -pi() * 0.5
+let a1 = a0 + (2.0 * pi() / 3.0)
+let a2 = a1 + (2.0 * pi() / 3.0)
+
+let x0 = cx + cos(a0) * radius
+let y0 = cy + sin(a0) * radius
+let x1 = cx + cos(a1) * radius
+let y1 = cy + sin(a1) * radius
+let x2 = cx + cos(a2) * radius
+let y2 = cy + sin(a2) * radius
+
+# Adâncimea recursivității: 3 pentru 64x64/128x128, 4 pentru 256x256
+let order = 3
+if min(w, h) >= 128 {
+    order = 4
+}
+
+# Cercuri discrete în fundal
+circle(#141b41ff, cx, cy, radius * 0.72, 0)
+circle(#1e2a5eff, cx, cy, radius * 0.45, 0)
+
+# Desenăm cele 3 laturi ale fulgului
+koch(x0, y0, x1, y1, order, #00f5d4ff, #ff2a85ff)
+koch(x1, y1, x2, y2, order, #00f5d4ff, #ffbe0bff)
+koch(x2, y2, x0, y0, order, #00f5d4ff, #3a86ffff)
+
+echo("Koch Snowflake | ordin:", order, "| latură bază:", dist(x0, y0, x1, y1))

@@ -758,6 +758,8 @@ struct IconEditorApp {
     cmd_input: String,
     cmd_history: Vec<String>,
     cmd_vars: std::collections::HashMap<String, dot_lang::Value>,
+    cmd_funcs: std::collections::HashMap<String, dot_lang::UserFn>,
+    cmd_structs: std::collections::HashMap<String, dot_lang::StructDef>,
     dot_script_path: String,
 }
 
@@ -788,6 +790,8 @@ impl Default for IconEditorApp {
             cmd_input: String::new(),
             cmd_history: Vec::new(),
             cmd_vars: std::collections::HashMap::new(), 
+            cmd_funcs: std::collections::HashMap::new(),
+            cmd_structs: std::collections::HashMap::new(),
             dot_script_path: "fractal_tree.dot".to_string(),
         }
     }
@@ -807,12 +811,16 @@ impl IconEditorApp {
         frame.push_undo();
 
         let saved_vars = std::mem::take(&mut self.cmd_vars);
+        let saved_funcs = std::mem::take(&mut self.cmd_funcs);
+        let saved_structs = std::mem::take(&mut self.cmd_structs);
 
-        let (result, returned_vars) = {
+        let (result, returned_vars, returned_funcs, returned_structs) = {
             let Ok(canvas) =
                 dot_lang::CanvasBuffer::new(frame.width, frame.height, &mut frame.pixels)
             else {
                 self.cmd_vars = saved_vars;
+                self.cmd_funcs = saved_funcs;
+                self.cmd_structs = saved_structs;
                 self.cmd_history
                     .push("Eroare: buffer de pixeli invalid.".to_string());
                 return;
@@ -822,13 +830,18 @@ impl IconEditorApp {
                 canvas,
                 output: Vec::new(),
                 vars: saved_vars,
+                funcs: saved_funcs,
+                structs: saved_structs,
+                call_depth: 0,
             };
 
             let eval_res = dot_lang::eval_script(line, &mut ctx);
-            (eval_res.map(|()| ctx.output), ctx.vars)
+            (eval_res.map(|()| ctx.output), ctx.vars, ctx.funcs, ctx.structs)
         };
 
         self.cmd_vars = returned_vars;
+        self.cmd_funcs = returned_funcs;
+        self.cmd_structs = returned_structs;
         frame.dirty = true;
 
         match result {
