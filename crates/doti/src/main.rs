@@ -758,6 +758,7 @@ struct IconEditorApp {
     cmd_input: String,
     cmd_history: Vec<String>,
     cmd_vars: std::collections::HashMap<String, dot_lang::Value>,
+    dot_script_path: String,
 }
 
 impl Default for IconEditorApp {
@@ -787,6 +788,7 @@ impl Default for IconEditorApp {
             cmd_input: String::new(),
             cmd_history: Vec::new(),
             cmd_vars: std::collections::HashMap::new(), 
+            dot_script_path: "fractal_tree.dot".to_string(),
         }
     }
 }
@@ -838,6 +840,34 @@ impl IconEditorApp {
             }
             Err(err) => {
                 let msg = format!("Eroare dot: {err}");
+                self.cmd_history.push(msg.clone());
+                self.status_msg = msg;
+            }
+        }
+    }
+
+    fn load_dot_script_from_path(&mut self, auto_run: bool) {
+        let trimmed = self.dot_script_path.trim().trim_matches('"');
+        if trimmed.is_empty() {
+            self.cmd_history
+                .push("Eroare dot: introdu calea către un fișier .dot.".to_string());
+            return;
+        }
+
+        match std::fs::read_to_string(trimmed) {
+            Ok(contents) => {
+                self.cmd_input = contents.clone();
+                self.cmd_history
+                    .push(format!("[încărcat: {trimmed}]"));
+                if auto_run {
+                    self.run_dot_command(&contents);
+                    self.cmd_input.clear();
+                } else {
+                    self.status_msg = format!("Script încărcat în consolă: {trimmed}");
+                }
+            }
+            Err(err) => {
+                let msg = format!("Eroare la citirea '{trimmed}': {err}");
                 self.cmd_history.push(msg.clone());
                 self.status_msg = msg;
             }
@@ -1861,21 +1891,49 @@ impl eframe::App for IconEditorApp {
                 }
             });
 
-        // 4b. CONSOLĂ LIMBAJ DOT (MULTI-LINIE + VARIABILE PERSISTENTE)
+        // 4b. CONSOLĂ LIMBAJ DOT (MULTI-LINIE + VARIABILE PERSISTENTE + LOAD & RUN)
         egui::TopBottomPanel::bottom("command_panel")
             .resizable(true)
-            .min_height(120.0_f32)
-            .default_height(165.0_f32)
+            .min_height(135.0_f32)
+            .default_height(185.0_f32)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     ui.strong("Console (dot)");
-                    ui.label("(Ctrl+Enter sau Run pentru execuție)");
+                    ui.label("(Ctrl+Enter sau Run)");
                     if ui.small_button("Clear").clicked() {
                         self.cmd_history.clear();
                     }
                     if ui.small_button("Reset Vars").clicked() {
                         self.cmd_vars.clear();
                         self.cmd_history.push("[variabile resetate]".to_string());
+                    }
+
+                    ui.separator();
+                    ui.label("Fișier:");
+                    let path_resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.dot_script_path)
+                            .hint_text("ex: scripts/fractal_tree.dot")
+                            .desired_width(210.0_f32),
+                    );
+
+                    if ui.small_button("Browse...").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("Script DOT", &["dot"])
+                            .pick_file()
+                        {
+                            self.dot_script_path = path.display().to_string();
+                            self.load_dot_script_from_path(true);
+                        }
+                    }
+
+                    if ui.small_button("Load").clicked() {
+                        self.load_dot_script_from_path(false);
+                    }
+
+                    let enter_on_path = path_resp.lost_focus()
+                        && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if ui.small_button("Load & Run").clicked() || enter_on_path {
+                        self.load_dot_script_from_path(true);
                     }
                 });
 

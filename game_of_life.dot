@@ -1,0 +1,103 @@
+let w = width()
+let h = height()
+
+# Paletă după vârsta celulei: [mort, nou-născut, tânăr, matur, stabil]
+let pal = [#060412ff, #00f5d4ff, #3a86ffff, #ff2a85ff, #ffbe0bff]
+let max_age = len(pal) - 1
+
+# 1. Construim cele două matrice 2D (grid curent și bufferul next_grid)
+let grid = []
+let next_grid = []
+let seed = 133742
+
+for y in 0..h {
+    let row = []
+    let next_row = []
+    for x in 0..w {
+        seed = (seed * 1103515245 + 12345) % 2147483647
+        let alive = 0
+        # Densitate inițială ~28% celule vii
+        if (seed % 100) < 28 {
+            alive = 1
+        }
+        push(row, alive)
+        push(next_row, 0)
+    }
+    push(grid, row)
+    push(next_grid, next_row)
+}
+
+# Adăugăm un Glider clasic în colțul stânga-sus (dacă canvas-ul are minim 10x10)
+if w >= 10 && h >= 10 {
+    grid[2][3] = 1
+    grid[3][4] = 1
+    grid[4][2] = 1
+    grid[4][3] = 1
+    grid[4][4] = 1
+}
+
+# 2. Simulăm N generații folosind grid[y][x] = val
+let generations = 35
+let alive_count = 0
+
+for gen in 0..generations {
+    alive_count = 0
+
+    # Calculăm starea următoare în next_grid[y][x]
+    for y in 0..h {
+        for x in 0..w {
+            let neighbors = 0
+
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    if dx != 0 || dy != 0 {
+                        # Grilă toroidală (wrap-around pe margini)
+                        let nx = (x + dx + w) % w
+                        let ny = (y + dy + h) % h
+                        if grid[ny][nx] > 0 {
+                            neighbors = neighbors + 1
+                        }
+                    }
+                }
+            }
+
+            let cur = grid[y][x]
+            if cur > 0 {
+                # Supraviețuiește doar cu 2 sau 3 vecini; crește vârsta pentru culoare
+                if neighbors == 2 || neighbors == 3 {
+                    next_grid[y][x] = min(max_age, cur + 1)
+                } else {
+                    next_grid[y][x] = 0
+                }
+            } else {
+                # Naștere exact cu 3 vecini
+                if neighbors == 3 {
+                    next_grid[y][x] = 1
+                } else {
+                    next_grid[y][x] = 0
+                }
+            }
+        }
+    }
+
+    # Copiem next_grid în grid folosind asignare 2D directă
+    for y in 0..h {
+        for x in 0..w {
+            let state = next_grid[y][x]
+            grid[y][x] = state
+            if state > 0 {
+                alive_count = alive_count + 1
+            }
+        }
+    }
+}
+
+# 3. Randăm starea finală pe canvas
+for y in 0..h {
+    for x in 0..w {
+        let age = grid[y][x]
+        put_pixel(pal[age], x, y)
+    }
+}
+
+echo("Game of Life:", generations, "generații | celule vii:", alive_count, "| grilă:", w, "x", h)

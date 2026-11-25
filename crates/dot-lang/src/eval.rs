@@ -185,6 +185,41 @@ impl Parser {
                 self.skip_separators();
                 Ok(Stmt::Assign { name, value })
             }
+            TokenKind::Ident(ref name) if matches!(self.peek(1).kind, TokenKind::LBracket) => {
+                let name = name.clone();
+                let stmt_line = self.current().line;
+                let saved_pos = self.pos;
+                self.advance(); // consumă Ident
+
+                let mut indices = Vec::new();
+                while matches!(self.current().kind, TokenKind::LBracket) {
+                    let bracket_line = self.current().line;
+                    self.advance(); // consumă '['
+                    indices.push(self.parse_expr()?);
+                    if !matches!(self.advance().kind, TokenKind::RBracket) {
+                        return Err(format!(
+                            "Linia {bracket_line}: așteptat ']' la asignarea pe index"
+                        ));
+                    }
+                }
+
+                if matches!(self.current().kind, TokenKind::Eq) {
+                    self.advance(); // consumă '='
+                    let value = self.parse_expr()?;
+                    self.skip_separators();
+                    Ok(Stmt::IndexAssign {
+                        target: name,
+                        indices,
+                        value,
+                        line: stmt_line,
+                    })
+                } else {
+                    self.pos = saved_pos;
+                    let expr = self.parse_expr()?;
+                    self.skip_separators();
+                    Ok(Stmt::ExprStmt(expr))
+                }
+            }
             TokenKind::If => self.parse_if(),
             TokenKind::While => self.parse_while(),
             TokenKind::For => self.parse_for(),
@@ -582,6 +617,43 @@ fn eval_stmt(stmt: &Stmt, ctx: &mut EvalContext<'_>, line: usize) -> Result<Cont
             ctx.vars.insert(name.clone(), val);
             Ok(ControlFlow::Next)
         }
+        Stmt::IndexAssign {
+            target,
+            indices,
+            value,
+            line: stmt_line,
+        } => {
+            let l = *stmt_line;
+            let new_val = eval_expr(value, ctx, l)?;
+
+            let mut resolved_indices = Vec::with_capacity(indices.len());
+            for idx_expr in indices {
+                let idx_val = eval_expr(idx_expr, ctx, l)?;
+                match idx_val {
+                    Value::Int(i) if i >= 0 => resolved_indices.push(i as usize),
+                    Value::Int(i) => {
+                        return Err(format!(
+                            "Linia {l}: index negativ {i} la asignarea în listă"
+                        ));
+                    }
+                    other => {
+                        return Err(format!(
+                            "Linia {l}: indexul listei trebuie să fie întreg, primit {:?}",
+                            other
+                        ));
+                    }
+                }
+            }
+
+            let root = ctx.vars.get_mut(target).ok_or_else(|| {
+                format!(
+                    "Linia {l}: variabilă nedefinită '{target}' la asignare (folosește 'let {target} = ...')"
+                )
+            })?;
+
+            assign_at_indices(root, &resolved_indices, new_val, l)?;
+            Ok(ControlFlow::Next)
+        }
         Stmt::If {
             condition,
             then_branch,
@@ -706,6 +778,37 @@ fn eval_stmt(stmt: &Stmt, ctx: &mut EvalContext<'_>, line: usize) -> Result<Cont
             Ok(ControlFlow::Next)
         }
     }
+}
+
+fn assign_at_indices(
+    current: &mut Value,
+    indices: &[usize],
+    new_val: Value,
+    line: usize,
+) -> Result<(), String> {
+    let Some((&first, rest)) = indices.split_first() else {
+        *current = new_val;
+        return Ok(());
+    };
+
+    let items = match current {
+        Value::List(list) => list,
+        other => {
+            return Err(format!(
+                "Linia {line}: doar listele pot fi indexate cu [...], primit {:?}",
+                other
+            ));
+        }
+    };
+
+    if first >= items.len() {
+        return Err(format!(
+            "Linia {line}: index {first} în afara limitelor listei de lungime {}",
+            items.len()
+        ));
+    }
+
+    assign_at_indices(&mut items[first], rest, new_val, line)
 }
 
 pub(crate) fn eval_expr(expr: &Expr, ctx: &mut EvalContext<'_>, line: usize) -> Result<Value, String> {

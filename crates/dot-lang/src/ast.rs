@@ -59,6 +59,12 @@ pub enum Stmt {
         name: String,
         value: Expr,
     },
+    IndexAssign {
+        target: String,
+        indices: Vec<Expr>,
+        value: Expr,
+        line: usize,
+    },
     If {
         condition: Expr,
         then_branch: Vec<Stmt>,
