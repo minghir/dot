@@ -1,0 +1,15 @@
+import "brushes.dot"
+
+rect(#060412ff, 0, 0, width(), height())
+
+let b = Brush {
+    color: #00f5d4ff,
+    size: 1.0
+}
+
+let cx = width() * 0.5
+let cy = height() * 0.5
+let max_r = min(width(), height()) * 0.44
+
+draw_spiral(b, cx, cy, max_r, 4.0, 320, #00f5d4ff, #ff2a85ff)
+echo("Import reusit | ultima pensula:", b)

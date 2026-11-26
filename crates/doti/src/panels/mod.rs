@@ -1,0 +1,9 @@
+pub(crate) mod canvas;
+pub(crate) mod color;
+pub(crate) mod console;
+pub(crate) mod frames;
+pub(crate) mod history;
+pub(crate) mod layers;
+pub(crate) mod tools;
+pub(crate) mod top_bar;
+pub(crate) mod tool_properties;

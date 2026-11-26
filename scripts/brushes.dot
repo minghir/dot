@@ -1,0 +1,19 @@
+struct Brush {
+    color,
+    size
+}
+
+func lerp(a, b, t) {
+    return a + (b - a) * t
+}
+
+func draw_spiral(brush, cx, cy, max_r, turns, steps, c0, c1) {
+    for i in 0..=steps {
+        let t = i / (steps * 1.0)
+        let angle = t * turns * 2.0 * pi()
+        let r = lerp(2.0, max_r, t)
+        brush.color = mix(c0, c1, t)
+        brush.size = lerp(1.0, 4.0, t)
+        circle(brush.color, cx + cos(angle) * r, cy + sin(angle) * r, brush.size, 1)
+    }
+}

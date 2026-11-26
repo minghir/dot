@@ -110,6 +110,10 @@ pub enum Stmt {
         value: Expr,
         line: usize,
     },
+    Import {
+        path: Expr,
+        line: usize,
+    },
     ExprStmt(Expr),
 }
 

@@ -11,6 +11,7 @@ path = "src/main.rs"
 dot-lang = { path = "../dot-lang" }
 eframe = "0.29.1"
 egui = "0.29.1"
+egui_dock = "0.14" # potrivește versiunea cu eframe/egui
 ico = "0.3"
 image = "0.25"
 rfd = "0.15"

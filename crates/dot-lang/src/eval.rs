@@ -343,6 +343,15 @@ impl Parser {
                     line: ret_tok.line,
                 })
             }
+            TokenKind::Import => {
+                let imp_tok = self.advance(); // consumă 'import'
+                let path = self.parse_expr()?;
+                self.skip_separators();
+                Ok(Stmt::Import {
+                    path,
+                    line: imp_tok.line,
+                })
+            }
             TokenKind::Struct => self.parse_struct_decl(),
             _ => {
                 let expr = self.parse_expr()?;
@@ -1087,6 +1096,62 @@ fn eval_stmt(stmt: &Stmt, ctx: &mut EvalContext<'_>, line: usize) -> Result<Cont
                 None => Value::Nil,
             };
             Ok(ControlFlow::Return(val))
+        }
+        Stmt::Import {
+            path,
+            line: imp_line,
+        } => {
+            let l = *imp_line;
+            let path_val = eval_expr(path, ctx, l)?;
+            let Value::Str(rel_path) = path_val else {
+                return Err(format!(
+                    "Linia {l}: 'import' așteaptă un șir de caractere cu calea fișierului, primit {:?}",
+                    path_val
+                ));
+            };
+
+            let raw_path = std::path::PathBuf::from(&rel_path);
+            let resolved_path = if raw_path.is_absolute() {
+                raw_path
+            } else if let Some(ref base) = ctx.base_dir {
+                base.join(&raw_path)
+            } else {
+                std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join(&raw_path)
+            };
+
+            let canonical = std::fs::canonicalize(&resolved_path).map_err(|e| {
+                format!(
+                    "Linia {l}: nu s-a putut importa '{}' (căutat la '{}'): {e}",
+                    rel_path,
+                    resolved_path.display()
+                )
+            })?;
+
+            // Protecție la importuri circulare sau duplicate în aceeași execuție
+            if ctx.imported_files.contains(&canonical) {
+                return Ok(ControlFlow::Next);
+            }
+            ctx.imported_files.insert(canonical.clone());
+
+            let source = std::fs::read_to_string(&canonical).map_err(|e| {
+                format!(
+                    "Linia {l}: eroare la citirea fișierului importat '{}': {e}",
+                    canonical.display()
+                )
+            })?;
+
+            // Schimbăm temporar base_dir la folderul fișierului importat,
+            // astfel încât și importurile imbricate să funcționeze relativ.
+            let prev_base_dir = ctx.base_dir.clone();
+            ctx.base_dir = canonical.parent().map(std::path::Path::to_path_buf);
+
+            let res = crate::eval_script(&source, ctx);
+            ctx.base_dir = prev_base_dir;
+
+            res.map_err(|err| format!("În fișierul importat '{}':\n  {err}", rel_path))?;
+            Ok(ControlFlow::Next)
         }
         Stmt::ExprStmt(expr) => {
             let val = eval_expr(expr, ctx, line)?;

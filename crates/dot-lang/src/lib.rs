@@ -6,7 +6,8 @@ pub mod lexer;
 pub use ast::{BinaryOp, Expr, Program, Stmt};
 pub use eval::{eval_program, Value};
 pub use lexer::{tokenize, Token, TokenKind};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct StructDef {
@@ -73,6 +74,34 @@ pub struct EvalContext<'a> {
     pub funcs: std::collections::HashMap<String, UserFn>,
     pub structs: std::collections::HashMap<String, StructDef>,
     pub call_depth: usize,
+    pub base_dir: Option<PathBuf>,
+    pub imported_files: HashSet<PathBuf>,
+}
+
+/// Evaluează un fișier `.dot` de pe disc, setând automat `base_dir` la folderul fișierului
+/// pentru ca toate instrucțiunile `import` din interior să fie rezolvate relativ la acesta.
+pub fn eval_script_file(path: &Path, ctx: &mut EvalContext<'_>) -> Result<(), String> {
+    let canonical = std::fs::canonicalize(path).map_err(|e| {
+        format!(
+            "Nu s-a putut deschide scriptul '{}': {e}",
+            path.display()
+        )
+    })?;
+
+    let source = std::fs::read_to_string(&canonical).map_err(|e| {
+        format!(
+            "Eroare la citirea scriptului '{}': {e}",
+            canonical.display()
+        )
+    })?;
+
+    let prev_base_dir = ctx.base_dir.clone();
+    ctx.base_dir = canonical.parent().map(Path::to_path_buf);
+    ctx.imported_files.insert(canonical);
+
+    let res = eval_script(&source, ctx);
+    ctx.base_dir = prev_base_dir;
+    res
 }
 
 /// Parsează o culoare hex: #rgb, #rgba, #rrggbb sau #rrggbbaa.
