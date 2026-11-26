@@ -1,10 +1,12 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
-use dot_lang::{CanvasBuffer, EvalContext, eval_script};
+use dot_lang::{eval_script, eval_script_file, CanvasBuffer, EvalContext};
+
+
 use ico::{IconDir, IconDirEntry, IconImage};
 use image::{ImageFormat, RgbaImage};
 
@@ -113,18 +115,6 @@ fn main() {
 fn run() -> Result<(), String> {
     let cli = parse_args()?;
 
-    let source = match &cli.script_path {
-        Some(path) => fs::read_to_string(path)
-            .map_err(|e| format!("Nu pot citi '{}': {e}", path.display()))?,
-        None => {
-            let mut buf = String::new();
-            io::stdin()
-                .read_to_string(&mut buf)
-                .map_err(|e| format!("Nu pot citi de la stdin: {e}"))?;
-            buf
-        }
-    };
-
     let count = (cli.width as usize)
         .checked_mul(cli.height as usize)
         .ok_or_else(|| "Dimensiuni prea mari".to_string())?;
@@ -135,9 +125,23 @@ fn run() -> Result<(), String> {
         canvas,
         output: Vec::new(),
         vars: HashMap::new(),
+        funcs: HashMap::new(),
+        structs: HashMap::new(),
+        call_depth: 0,
+        base_dir: env::current_dir().ok(),
+        imported_files: HashSet::new(),
     };
 
-    eval_script(&source, &mut ctx)?;
+    match &cli.script_path {
+        Some(path) => eval_script_file(path, &mut ctx)?,
+        None => {
+            let mut source = String::new();
+            io::stdin()
+                .read_to_string(&mut source)
+                .map_err(|e| format!("Nu pot citi de la stdin: {e}"))?;
+            eval_script(&source, &mut ctx)?;
+        }
+    }
 
     for line in &ctx.output {
         eprintln!("{line}");

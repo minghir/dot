@@ -1,3 +1,10 @@
+[profile.dev]
+opt-level = 0
+debug = "line-tables-only" # reduce masiv dimensiunea fișierelor .pdb și timpul de linking
+
+[profile.dev.package."*"]
+opt-level = 2
+
 [workspace]
 resolver = "2"
 members = [
