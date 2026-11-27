@@ -23,9 +23,12 @@ impl IconEditorApp {
             .map(std::path::Path::to_path_buf)
             .or_else(|| std::env::current_dir().ok());
 
+        let w = frame.width;
+        let h = frame.height;
+
         let (result, returned_vars, returned_funcs, returned_structs) = {
             let Ok(canvas) =
-                dot_lang::CanvasBuffer::new(frame.width, frame.height, &mut frame.pixels)
+                dot_lang::CanvasBuffer::new(w, h, &mut frame.active_layer_mut().pixels)
             else {
                 self.cmd_vars = saved_vars;
                 self.cmd_funcs = saved_funcs;
@@ -53,14 +56,14 @@ impl IconEditorApp {
         self.cmd_vars = returned_vars;
         self.cmd_funcs = returned_funcs;
         self.cmd_structs = returned_structs;
-        frame.dirty = true;
+        frame.recompose();
 
         match result {
             Ok(lines) => {
                 for l in lines {
                     self.cmd_history.push(l);
                 }
-                self.status_msg = "Script executat.".to_string();
+                self.status_msg = "Script executat pe layer-ul activ.".to_string();
             }
             Err(err) => {
                 let msg = format!("Eroare dot: {err}");

@@ -72,95 +72,64 @@ pub(crate) enum Tool {
     SelectRect,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct Layer {
+    pub(crate) name: String,
+    pub(crate) visible: bool,
+    pub(crate) opacity: f32, // 0.0 ..= 1.0
+    pub(crate) pixels: Vec<[u8; 4]>,
+}
+
+impl Layer {
+    pub(crate) fn new(name: impl Into<String>, width: u32, height: u32) -> Self {
+        let count = (width * height) as usize;
+        Self {
+            name: name.into(),
+            visible: true,
+            opacity: 1.0,
+            pixels: vec![[0, 0, 0, 0]; count],
+        }
+    }
+
+    pub(crate) fn from_pixels(name: impl Into<String>, pixels: Vec<[u8; 4]>) -> Self {
+        Self {
+            name: name.into(),
+            visible: true,
+            opacity: 1.0,
+            pixels,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct HistorySnapshot {
+    pub(crate) layers: Vec<Layer>,
+    pub(crate) active_layer: usize,
+}
+
+
 pub(crate) struct IconFrame {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) color_depth: ColorDepth,
-    pub(crate) pixels: Vec<[u8; 4]>, // RGBA8
-    pub(crate) undo_stack: Vec<Vec<[u8; 4]>>,
-    pub(crate) redo_stack: Vec<Vec<[u8; 4]>>,
+    pub(crate) layers: Vec<Layer>,
+    pub(crate) active_layer: usize,
+    pub(crate) pixels: Vec<[u8; 4]>, // Buffer compozit final RGBA8
+    pub(crate) undo_stack: Vec<HistorySnapshot>,
+    pub(crate) redo_stack: Vec<HistorySnapshot>,
     pub(crate) texture: Option<egui::TextureHandle>,
     pub(crate) dirty: bool,
 }
 
 impl IconFrame {
-    pub(crate) fn flood_fill_with_options(
-        &mut self,
-        start_x: u32,
-        start_y: u32,
-        mut new_color: [u8; 4],
-        tolerance: u8,
-        contiguous: bool,
-    ) {
-        if self.color_depth != ColorDepth::Bit32 {
-            new_color[3] = if new_color[3] < 128 { 0 } else { 255 };
-        }
-        let target = self.get_pixel(start_x, start_y);
-        if tolerance == 0 && target == new_color {
-            return;
-        }
-
-        let tol_i32 = tolerance as i32;
-        let matches = |px: [u8; 4]| -> bool {
-            if tolerance == 0 {
-                return px == target;
-            }
-            (px[0] as i32 - target[0] as i32).abs() <= tol_i32
-                && (px[1] as i32 - target[1] as i32).abs() <= tol_i32
-                && (px[2] as i32 - target[2] as i32).abs() <= tol_i32
-                && (px[3] as i32 - target[3] as i32).abs() <= tol_i32
-        };
-
-        if !contiguous {
-            for y in 0..self.height {
-                for x in 0..self.width {
-                    if matches(self.get_pixel(x, y)) {
-                        self.set_pixel(x, y, new_color);
-                    }
-                }
-            }
-            return;
-        }
-
-        let w = self.width as usize;
-        let h = self.height as usize;
-        let mut visited = vec![false; w * h];
-        let mut stack = vec![(start_x, start_y)];
-
-        while let Some((x, y)) = stack.pop() {
-            let idx = y as usize * w + x as usize;
-            if visited[idx] {
-                continue;
-            }
-            visited[idx] = true;
-
-            if !matches(self.pixels[idx]) {
-                continue;
-            }
-
-            self.set_pixel(x, y, new_color);
-
-            if x > 0 {
-                stack.push((x - 1, y));
-            }
-            if x + 1 < self.width {
-                stack.push((x + 1, y));
-            }
-            if y > 0 {
-                stack.push((x, y - 1));
-            }
-            if y + 1 < self.height {
-                stack.push((x, y + 1));
-            }
-        }
-    }
-
     pub(crate) fn new(width: u32, height: u32, color_depth: ColorDepth) -> Self {
         let count = (width * height) as usize;
         Self {
             width,
             height,
             color_depth,
+            layers: vec![Layer::new("Layer 0", width, height)],
+            active_layer: 0,
             pixels: vec![[0, 0, 0, 0]; count],
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -183,6 +152,8 @@ impl IconFrame {
             width,
             height,
             color_depth,
+            layers: vec![Layer::from_pixels("Layer 0", pixels.clone())],
+            active_layer: 0,
             pixels,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
@@ -191,13 +162,244 @@ impl IconFrame {
         }
     }
 
+    pub(crate) fn active_layer_mut(&mut self) -> &mut Layer {
+        if self.layers.is_empty() {
+            self.layers.push(Layer::new("Layer 0", self.width, self.height));
+            self.active_layer = 0;
+        }
+        let idx = self.active_layer.min(self.layers.len() - 1);
+        self.active_layer = idx;
+        &mut self.layers[idx]
+    }
+
+    /// Compune toate layerele vizibile (de jos în sus: index 0 -> len-1) în `self.pixels`
+    pub(crate) fn recompose(&mut self) {
+        let count = (self.width * self.height) as usize;
+        self.pixels.fill([0, 0, 0, 0]);
+
+        for layer in &self.layers {
+            if !layer.visible || layer.opacity <= 0.0 {
+                continue;
+            }
+            let layer_op = layer.opacity.clamp(0.0, 1.0);
+
+            for i in 0..count.min(layer.pixels.len()) {
+                let src = layer.pixels[i];
+                if src[3] == 0 {
+                    continue;
+                }
+
+                let sa = (src[3] as f32 / 255.0) * layer_op;
+                if sa <= 0.0 {
+                    continue;
+                }
+
+                let dst = self.pixels[i];
+                let da = dst[3] as f32 / 255.0;
+                let out_a = sa + da * (1.0 - sa);
+
+                if out_a <= 0.0 {
+                    self.pixels[i] = [0, 0, 0, 0];
+                } else {
+                    let blend = |sc: u8, dc: u8| -> u8 {
+                        let c = ((sc as f32 * sa) + (dc as f32 * da * (1.0 - sa))) / out_a;
+                        c.round().clamp(0.0, 255.0) as u8
+                    };
+                    let mut final_a = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+                    if self.color_depth != ColorDepth::Bit32 {
+                        final_a = if final_a < 128 { 0 } else { 255 };
+                    }
+                    self.pixels[i] = if final_a == 0 {
+                        [0, 0, 0, 0]
+                    } else {
+                        [
+                            blend(src[0], dst[0]),
+                            blend(src[1], dst[1]),
+                            blend(src[2], dst[2]),
+                            final_a,
+                        ]
+                    };
+                }
+            }
+        }
+        self.dirty = true;
+    }
+
+    pub(crate) fn add_layer(&mut self, name: Option<String>) {
+        self.push_undo();
+        let next_num = self.layers.len();
+        let layer_name = name.unwrap_or_else(|| format!("Layer {next_num}"));
+        let insert_idx = (self.active_layer + 1).min(self.layers.len());
+        self.layers
+            .insert(insert_idx, Layer::new(layer_name, self.width, self.height));
+        self.active_layer = insert_idx;
+        self.recompose();
+    }
+
+    pub(crate) fn duplicate_layer(&mut self, idx: usize) {
+        if idx >= self.layers.len() {
+            return;
+        }
+        self.push_undo();
+        let mut copy = self.layers[idx].clone();
+        copy.name = format!("{} (copy)", copy.name);
+        let insert_idx = idx + 1;
+        self.layers.insert(insert_idx, copy);
+        self.active_layer = insert_idx;
+        self.recompose();
+    }
+
+    pub(crate) fn remove_layer(&mut self, idx: usize) {
+        if self.layers.len() <= 1 || idx >= self.layers.len() {
+            return;
+        }
+        self.push_undo();
+        self.layers.remove(idx);
+        if self.active_layer >= self.layers.len() {
+            self.active_layer = self.layers.len() - 1;
+        }
+        self.recompose();
+    }
+
+    pub(crate) fn move_layer(&mut self, from: usize, to: usize) {
+        if from >= self.layers.len() || to >= self.layers.len() || from == to {
+            return;
+        }
+        self.push_undo();
+        let layer = self.layers.remove(from);
+        self.layers.insert(to, layer);
+        self.active_layer = to;
+        self.recompose();
+    }
+
+    pub(crate) fn merge_down(&mut self, idx: usize) {
+        if idx == 0 || idx >= self.layers.len() {
+            return;
+        }
+        self.push_undo();
+        let top = self.layers.remove(idx);
+        let bottom = &mut self.layers[idx - 1];
+        let top_op = if top.visible {
+            top.opacity.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+
+        for i in 0..bottom.pixels.len().min(top.pixels.len()) {
+            let src = top.pixels[i];
+            let sa = (src[3] as f32 / 255.0) * top_op;
+            if sa <= 0.0 {
+                continue;
+            }
+            let dst = bottom.pixels[i];
+            let da = dst[3] as f32 / 255.0;
+            let out_a = sa + da * (1.0 - sa);
+            if out_a <= 0.0 {
+                bottom.pixels[i] = [0, 0, 0, 0];
+            } else {
+                let blend = |sc: u8, dc: u8| -> u8 {
+                    let c = ((sc as f32 * sa) + (dc as f32 * da * (1.0 - sa))) / out_a;
+                    c.round().clamp(0.0, 255.0) as u8
+                };
+                bottom.pixels[i] = [
+                    blend(src[0], dst[0]),
+                    blend(src[1], dst[1]),
+                    blend(src[2], dst[2]),
+                    (out_a * 255.0).round().clamp(0.0, 255.0) as u8,
+                ];
+            }
+        }
+
+        self.active_layer = idx - 1;
+        self.recompose();
+    }
+
+    pub(crate) fn flatten_layers(&mut self) {
+        if self.layers.len() <= 1 {
+            return;
+        }
+        self.push_undo();
+        self.recompose();
+        self.layers = vec![Layer::from_pixels("Background", self.pixels.clone())];
+        self.active_layer = 0;
+        self.dirty = true;
+    }
+
+    pub(crate) fn push_undo(&mut self) {
+        if self.undo_stack.len() >= 30 {
+            self.undo_stack.remove(0);
+        }
+        self.undo_stack.push(HistorySnapshot {
+            layers: self.layers.clone(),
+            active_layer: self.active_layer,
+        });
+        self.redo_stack.clear();
+    }
+
+    pub(crate) fn undo(&mut self) {
+        if let Some(prev) = self.undo_stack.pop() {
+            self.redo_stack.push(HistorySnapshot {
+                layers: self.layers.clone(),
+                active_layer: self.active_layer,
+            });
+            self.layers = prev.layers;
+            self.active_layer = prev.active_layer.min(self.layers.len().saturating_sub(1));
+            self.recompose();
+        }
+    }
+
+    pub(crate) fn redo(&mut self) {
+        if let Some(next) = self.redo_stack.pop() {
+            self.undo_stack.push(HistorySnapshot {
+                layers: self.layers.clone(),
+                active_layer: self.active_layer,
+            });
+            self.layers = next.layers;
+            self.active_layer = next.active_layer.min(self.layers.len().saturating_sub(1));
+            self.recompose();
+        }
+    }
+
+    /// Citește pixelul compozit (din toate layerele vizibile)
+    pub(crate) fn get_pixel(&self, x: u32, y: u32) -> [u8; 4] {
+        self.pixels[(y * self.width + x) as usize]
+    }
+
+    /// Citește pixelul exclusiv de pe layer-ul activ
+    pub(crate) fn get_active_layer_pixel(&self, x: u32, y: u32) -> [u8; 4] {
+        let idx = self.active_layer.min(self.layers.len() - 1);
+        self.layers[idx].pixels[(y * self.width + x) as usize]
+    }
+
+    /// Scrie un pixel pe layer-ul activ (necesită `recompose()` la sfârșitul operației)
+    pub(crate) fn set_pixel_raw(&mut self, x: u32, y: u32, mut color: [u8; 4]) {
+        if self.color_depth != ColorDepth::Bit32 {
+            color[3] = if color[3] < 128 { 0 } else { 255 };
+        }
+        let idx = (y * self.width + x) as usize;
+        let layer = self.active_layer_mut();
+        if layer.pixels[idx] != color {
+            layer.pixels[idx] = color;
+        }
+    }
+
+    pub(crate) fn set_pixel(&mut self, x: u32, y: u32, color: [u8; 4]) {
+        self.set_pixel_raw(x, y, color);
+        self.recompose();
+    }
+
+    pub(crate) fn clear_active_layer(&mut self) {
+        self.active_layer_mut().pixels.fill([0, 0, 0, 0]);
+        self.recompose();
+    }
+
     pub(crate) fn remove_corner_background(&mut self, tolerance: f32) {
         let w = self.width as usize;
         let h = self.height as usize;
         if w == 0 || h == 0 {
             return;
         }
-        let bg = self.get_pixel(0, 0);
+        let bg = self.get_active_layer_pixel(0, 0);
         let mut visited = vec![false; w * h];
         let mut stack = vec![
             (0u32, 0u32),
@@ -206,6 +408,9 @@ impl IconFrame {
             (self.width - 1, self.height - 1),
         ];
         let feather = 30.0_f32;
+        let width = self.width;
+        let height = self.height;
+        let layer = self.active_layer_mut();
 
         while let Some((x, y)) = stack.pop() {
             let idx = y as usize * w + x as usize;
@@ -214,7 +419,7 @@ impl IconFrame {
             }
             visited[idx] = true;
 
-            let p = self.pixels[idx];
+            let p = layer.pixels[idx];
             if p[3] == 0 {
                 continue;
             }
@@ -225,17 +430,17 @@ impl IconFrame {
             let dist = (dr * dr + dg * dg + db * db).sqrt();
 
             if dist <= tolerance {
-                self.pixels[idx] = [0, 0, 0, 0];
+                layer.pixels[idx] = [0, 0, 0, 0];
                 if x > 0 {
                     stack.push((x - 1, y));
                 }
-                if x + 1 < self.width {
+                if x + 1 < width {
                     stack.push((x + 1, y));
                 }
                 if y > 0 {
                     stack.push((x, y - 1));
                 }
-                if y + 1 < self.height {
+                if y + 1 < height {
                     stack.push((x, y + 1));
                 }
             } else if dist < tolerance + feather {
@@ -243,7 +448,7 @@ impl IconFrame {
                 let unblend = |c: u8, b: u8| -> u8 {
                     (((c as f32 - (1.0 - alpha) * b as f32) / alpha).clamp(0.0, 255.0)) as u8
                 };
-                self.pixels[idx] = [
+                layer.pixels[idx] = [
                     unblend(p[0], bg[0]),
                     unblend(p[1], bg[1]),
                     unblend(p[2], bg[2]),
@@ -251,45 +456,107 @@ impl IconFrame {
                 ];
             }
         }
-        self.dirty = true;
+        self.recompose();
     }
 
-    pub(crate) fn push_undo(&mut self) {
-        if self.undo_stack.len() >= 30 {
-            self.undo_stack.remove(0);
-        }
-        self.undo_stack.push(self.pixels.clone());
-        self.redo_stack.clear();
-    }
-
-    pub(crate) fn undo(&mut self) {
-        if let Some(prev) = self.undo_stack.pop() {
-            self.redo_stack.push(self.pixels.clone());
-            self.pixels = prev;
-            self.dirty = true;
-        }
-    }
-
-    pub(crate) fn redo(&mut self) {
-        if let Some(next) = self.redo_stack.pop() {
-            self.undo_stack.push(self.pixels.clone());
-            self.pixels = next;
-            self.dirty = true;
-        }
-    }
-
-    pub(crate) fn get_pixel(&self, x: u32, y: u32) -> [u8; 4] {
-        self.pixels[(y * self.width + x) as usize]
-    }
-
-    pub(crate) fn set_pixel(&mut self, x: u32, y: u32, mut color: [u8; 4]) {
+    pub(crate) fn flood_fill_with_options(
+        &mut self,
+        start_x: u32,
+        start_y: u32,
+        mut new_color: [u8; 4],
+        tolerance: u8,
+        contiguous: bool,
+    ) {
         if self.color_depth != ColorDepth::Bit32 {
-            color[3] = if color[3] < 128 { 0 } else { 255 };
+            new_color[3] = if new_color[3] < 128 { 0 } else { 255 };
         }
-        let idx = (y * self.width + x) as usize;
-        if self.pixels[idx] != color {
-            self.pixels[idx] = color;
-            self.dirty = true;
+        let target = self.get_active_layer_pixel(start_x, start_y);
+        if tolerance == 0 && target == new_color {
+            return;
+        }
+
+        let tol_i32 = tolerance as i32;
+        let matches = |px: [u8; 4]| -> bool {
+            if tolerance == 0 {
+                return px == target;
+            }
+            (px[0] as i32 - target[0] as i32).abs() <= tol_i32
+                && (px[1] as i32 - target[1] as i32).abs() <= tol_i32
+                && (px[2] as i32 - target[2] as i32).abs() <= tol_i32
+                && (px[3] as i32 - target[3] as i32).abs() <= tol_i32
+        };
+
+        if !contiguous {
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    if matches(self.get_active_layer_pixel(x, y)) {
+                        self.set_pixel_raw(x, y, new_color);
+                    }
+                }
+            }
+            self.recompose();
+            return;
+        }
+
+        let w = self.width as usize;
+        let h = self.height as usize;
+        let mut visited = vec![false; w * h];
+        let mut stack = vec![(start_x, start_y)];
+
+        while let Some((x, y)) = stack.pop() {
+            let idx = y as usize * w + x as usize;
+            if visited[idx] {
+                continue;
+            }
+            visited[idx] = true;
+
+            if !matches(self.get_active_layer_pixel(x, y)) {
+                continue;
+            }
+
+            self.set_pixel_raw(x, y, new_color);
+
+            if x > 0 {
+                stack.push((x - 1, y));
+            }
+            if x + 1 < self.width {
+                stack.push((x + 1, y));
+            }
+            if y > 0 {
+                stack.push((x, y - 1));
+            }
+            if y + 1 < self.height {
+                stack.push((x, y + 1));
+            }
+        }
+        self.recompose();
+    }
+
+    pub(crate) fn apply_color_depth(&mut self, dithering: bool) {
+        self.recompose();
+        match self.color_depth {
+            ColorDepth::Bit32 => {}
+            ColorDepth::Bit24 => {
+                for layer in &mut self.layers {
+                    for p in &mut layer.pixels {
+                        if p[3] < 128 {
+                            *p = [0, 0, 0, 0];
+                        } else {
+                            p[3] = 255;
+                        }
+                    }
+                }
+                self.recompose();
+            }
+            ColorDepth::Bit8 | ColorDepth::Bit4 | ColorDepth::Bit1 => {
+                let max_colors = 1usize << self.color_depth.bits();
+                let palette = build_palette(&self.pixels, max_colors);
+                let (quantized, _) =
+                    quantize_pixels(&self.pixels, self.width, self.height, &palette, dithering);
+                self.layers = vec![Layer::from_pixels("Indexed", quantized)];
+                self.active_layer = 0;
+                self.recompose();
+            }
         }
     }
 
@@ -319,30 +586,6 @@ impl IconFrame {
         );
         self.texture = Some(ctx.load_texture(name, color_image, egui::TextureOptions::NEAREST));
         self.dirty = false;
-    }
-
-    pub(crate) fn apply_color_depth(&mut self, dithering: bool) {
-        match self.color_depth {
-            ColorDepth::Bit32 => {}
-            ColorDepth::Bit24 => {
-                for p in &mut self.pixels {
-                    if p[3] < 128 {
-                        *p = [0, 0, 0, 0];
-                    } else {
-                        p[3] = 255;
-                    }
-                }
-                self.dirty = true;
-            }
-            ColorDepth::Bit8 | ColorDepth::Bit4 | ColorDepth::Bit1 => {
-                let max_colors = 1usize << self.color_depth.bits();
-                let palette = build_palette(&self.pixels, max_colors);
-                let (quantized, _) =
-                    quantize_pixels(&self.pixels, self.width, self.height, &palette, dithering);
-                self.pixels = quantized;
-                self.dirty = true;
-            }
-        }
     }
 
     pub(crate) fn encode_ico_payload(&self, dithering: bool) -> Result<Vec<u8>, String> {

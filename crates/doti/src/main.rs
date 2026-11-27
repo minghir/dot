@@ -39,6 +39,7 @@ pub(crate) struct IconEditorApp {
     pub(crate) dot_script_path: String,
     pub(crate) tool_settings: tools::ToolSettings,
     pub(crate) stroke_points: Vec<(i32, i32)>,
+    pub(crate) renaming_layer: Option<usize>,
 }
 
 impl Default for IconEditorApp {
@@ -74,6 +75,7 @@ impl Default for IconEditorApp {
             dot_script_path: "fractal_tree.dot".to_string(),
             tool_settings: tools::ToolSettings::default(),
             stroke_points: Vec::new(),
+            renaming_layer: None,
         }
     }
 }

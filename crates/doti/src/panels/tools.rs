@@ -148,8 +148,7 @@ impl IconEditorApp {
             if ui.button("Sterge Tot Frame-ul").clicked() {
                 let f = &mut self.frames[self.active_frame];
                 f.push_undo();
-                f.pixels.fill([0, 0, 0, 0]);
-                f.dirty = true;
+                f.clear_active_layer();
             }
             if ui.button("Propaga la toate formatele").clicked() {
                 self.regenerate_from_current();

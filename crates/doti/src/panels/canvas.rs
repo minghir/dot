@@ -58,7 +58,7 @@ impl IconEditorApp {
                     let px = bx + dx;
                     let py = by + dy;
                     if px >= 0 && px < w && py >= 0 && py < h {
-                        frame.set_pixel(px as u32, py as u32, color);
+                        frame.set_pixel_raw(px as u32, py as u32, color);
                     }
                 }
             }
@@ -74,6 +74,8 @@ impl IconEditorApp {
         if params.mirror_x && params.mirror_y {
             draw_at(w - 1 - cx, h - 1 - cy);
         }
+
+        frame.recompose();
     }
 
     pub(crate) fn show_canvas_panel(&mut self, ui: &mut egui::Ui) {
@@ -225,7 +227,6 @@ impl IconEditorApp {
                     {
                         self.hovered_coord = Some((gx as u32, gy as u32));
 
-                        // Preview chenar pensulă adaptat la dimensiunea tool-ului activ
                         let brush_sz = match self.tool {
                             Tool::Pencil => self.tool_settings.pencil.size.max(1) as i32,
                             Tool::Eraser => self.tool_settings.eraser.size.max(1) as i32,
@@ -315,9 +316,9 @@ impl IconEditorApp {
                                         let before = self.stroke_points.len();
                                         apply_pixel_perfect_filter(&mut self.stroke_points);
                                         if self.stroke_points.len() < before {
-                                            // Restaurează snapshot-ul înainte de acest stroke și redesenează curat
                                             if let Some(base) = frame.undo_stack.last().cloned() {
-                                                frame.pixels = base;
+                                                frame.layers = base.layers;
+                                                frame.recompose();
                                             }
                                             for &(px, py) in &self.stroke_points {
                                                 Self::stamp_brush_on_frame(
@@ -354,7 +355,12 @@ impl IconEditorApp {
                                     }
                                 }
                                 Tool::Eyedropper => {
-                                    self.primary_color = frame.get_pixel(gx as u32, gy as u32);
+                                    self.primary_color =
+                                        if self.tool_settings.eyedropper.sample_all_layers {
+                                            frame.get_pixel(gx as u32, gy as u32)
+                                        } else {
+                                            frame.get_active_layer_pixel(gx as u32, gy as u32)
+                                        };
                                     if self.tool_settings.eyedropper.auto_switch_to_pencil {
                                         self.tool = Tool::Pencil;
                                     }
