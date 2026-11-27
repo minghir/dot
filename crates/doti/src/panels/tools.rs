@@ -167,7 +167,7 @@ impl IconEditorApp {
 
             ui.separator();
             ui.checkbox(&mut self.show_grid, "Afiseaza Grid");
-            ui.add(egui::Slider::new(&mut self.zoom, 2.0..=32.0).text("Zoom"));
+            ui.add(egui::Slider::new(&mut self.zoom, 1.0..=32.0).text("Zoom"));
         });
     }
 }
